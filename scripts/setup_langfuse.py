@@ -25,7 +25,6 @@ from pathlib import Path
 import yaml
 from langfuse import Langfuse
 
-
 REPO = Path(__file__).resolve().parents[1]
 DATASET_NAME = "telemetry-analyst-golden"
 
@@ -90,7 +89,9 @@ def main() -> int:
     print("    Advanced Settings → Base URL:")
     print("      https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com/openai/v1")
     print("    カスタムヘッダ (対応していれば):")
-    print("      OpenAI-Project: ocid1.generativeaiproject.oc1.ap-osaka-1.amaaaaaassl65iqak67q6dr5zu6jqoimgf54sylota5devqglzkkoenxznxa")
+    print(
+        "      OpenAI-Project: ocid1.generativeaiproject.oc1.ap-osaka-1.amaaaaaassl65iqak67q6dr5zu6jqoimgf54sylota5devqglzkkoenxznxa"
+    )
     print("  ※ カスタムヘッダが未対応なら deploy/k8s/deployment-litellm-proxy.yaml を")
     print("     有効化し、LiteLLM 経由でアクセスする (別途手順)")
     print()
@@ -101,7 +102,7 @@ def main() -> int:
         print(f"     target={spec['trigger']['target']} filter={spec['trigger'].get('filter')}")
     print()
     print("  登録手順: Settings → Evaluators → + Set up Evaluator → Custom Evaluator")
-    print(f"  Prompt 本文・variables・score_type は eval/evaluators/ の各 YAML からコピー.")
+    print("  Prompt 本文・variables・score_type は eval/evaluators/ の各 YAML からコピー.")
     print()
     print("--- Dataset Experiment 実行 ---")
     print("  UI: Datasets → telemetry-analyst-golden → Run Experiment")

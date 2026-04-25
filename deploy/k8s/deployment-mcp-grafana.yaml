@@ -20,11 +20,12 @@ spec:
           image: docker.io/mcp/grafana:latest
           imagePullPolicy: IfNotPresent
           args:
-            - "--transport=sse"
+            # OCI Hosted MCP は modern な streamable-http を期待 (SSE は MCP 仕様で deprecated)
+            - "--transport=streamable-http"
             - "--address=0.0.0.0:8000"
           ports:
             - containerPort: 8000
-              name: sse
+              name: http
           env:
             - name: GRAFANA_URL
               valueFrom:
