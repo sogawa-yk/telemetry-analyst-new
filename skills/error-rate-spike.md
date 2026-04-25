@@ -1,6 +1,17 @@
 ---
 name: error-rate-spike
-triggers: [5xx, error, エラー, 500, 503, 急増, spike, 増えた]
+triggers:
+  - 5xx
+  - error
+  - エラー
+  - "500"
+  - "503"
+  - 急増
+  - spike
+  - 増えた
+  - エラー率
+  - 失敗
+  - 失敗率
 mode: any
 ---
 

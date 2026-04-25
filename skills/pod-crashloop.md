@@ -1,6 +1,14 @@
 ---
 name: pod-crashloop
-triggers: [crashloop, restart, 再起動, ImagePullBackOff, CreateContainerConfigError, Error]
+triggers:
+  - crashloop
+  - CrashLoopBackOff
+  - restart
+  - 再起動
+  - ImagePullBackOff
+  - CreateContainerConfigError
+  - 起動失敗
+  - 立ち上がらない
 mode: any
 ---
 

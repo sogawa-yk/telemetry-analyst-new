@@ -1,6 +1,15 @@
 ---
 name: oom-kill
-triggers: [OOM, OOMKilled, メモリ, memory, out of memory]
+triggers:
+  - OOM
+  - OOMKilled
+  - メモリ
+  - memory
+  - out of memory
+  - メモリ不足
+  - Evicted
+  - メモリリーク
+  - memory leak
 mode: any
 ---
 

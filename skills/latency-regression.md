@@ -1,6 +1,18 @@
 ---
 name: latency-regression
-triggers: [latency, p99, p95, slow, 遅い, レイテンシ, 遅延, timeout]
+triggers:
+  - latency
+  - p99
+  - p95
+  - slow
+  - 遅い
+  - レイテンシ
+  - 遅延
+  - timeout
+  - 応答時間
+  - 劣化
+  - 重い
+  - 反応が悪い
 mode: any
 ---
 
