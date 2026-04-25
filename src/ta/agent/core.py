@@ -33,6 +33,7 @@ from agents import (
 from openai import AsyncOpenAI
 from openai.types.responses import ResponseTextDeltaEvent
 
+from ta.agent._oci_compat import make_oci_http_client
 from ta.agent.prompts import __path__ as _PROMPTS_PKG
 from ta.agent.skills.loader import SkillRetriever
 from ta.agent.tools import k8s as k8s_tools
@@ -58,11 +59,14 @@ class AgentResult:
 class Agent:
     def __init__(self) -> None:
         s = get_settings()
-        # Agents SDK 用の AsyncOpenAI を OCI Enterprise AI に向ける
+        # Agents SDK 用の AsyncOpenAI を OCI Enterprise AI に向ける.
+        # OCI 固有の Responses API 検証差分 (mcp_call の output 欠落で 400) を吸収する
+        # ため、httpx カスタム transport を挟んで request body を sanitize する.
         self._async_client = AsyncOpenAI(
             api_key=s.openai_api_key,
             base_url=s.openai_base_url,
             default_headers={"OpenAI-Project": s.oci_genai_project},
+            http_client=make_oci_http_client(),
         )
         set_default_openai_client(self._async_client)
         set_default_openai_api("responses")

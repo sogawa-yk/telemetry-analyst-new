@@ -82,14 +82,24 @@ python scripts/run_experiment.py --label iter-NN --description "..."
 
 ---
 
-### Iter-01
+### Iter-01 (OCI 400 修復)
 
-- **日時**: (pending)
+- **日時**: 2026-04-25 11:35 UTC
 - **Experiment Run 名**: `iter-01`
-- **LLM-as-Judge 平均スコア**: (pending)
-- **人間レビュー所見**: (pending)
-- **修正**: (pending)
-- **期待効果**: (pending)
+- **完走率**: **15/15 (100%)** ← Iter-00 比 +2 件 (BadRequest 解消)
+- **修正**: `(e) 戻り値ガード` 系
+  - 新規 `src/ta/agent/_oci_compat.py` を追加。`OCISanitizingTransport` (httpx カスタム transport) で `/responses` POST の request body の `input` 配列を sanitize:
+    - `mcp_call` で `output` フィールドが欠落 (Hosted MCP 失敗時) → `"(MCP tool error: ...)"` で補完
+    - `function_call_output.output` が空文字 → `"(empty output)"` で補完
+  - `Agent.__init__` の `AsyncOpenAI` 構築時に `http_client=make_oci_http_client()` で挟む
+  - `tests/test_oci_compat.py` を追加 (6 件 pass)
+- **根本原因の所見**:
+  - OCI の Responses API は OpenAI 公式と比べて input 配列の検証が厳格
+  - 公式は `mcp_call` の `output` 欠落を許容するが OCI は `Missing required parameter: 'input[N].output'` で 400 を返す
+  - Hosted MCP が失敗 (今回は Grafana の DNS 解決失敗) → Agents SDK が次ターンの input を組む際に output を入れず → OCI 拒否、というチェーン
+- **Iter-01 中の sanitize 発動**: 7 回観測 (Grafana MCP の transient 失敗が複数ケースで起きていたことを示唆)
+- **期待効果**: 100% 完走 (達成)。今後 MCP 経路で transient 失敗が起きても LLM はメッセージを受け取り、回答継続できる。
+- **次回 Iter-02 候補**: (c) prompt — `error-recent-24h-04` で 24h 全期間スキャンを抑制する誘導を `cost-aware-query` skill か `mode_engineer.md` に強化。
 
 ---
 
