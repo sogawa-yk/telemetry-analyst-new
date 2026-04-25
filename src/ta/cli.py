@@ -8,6 +8,7 @@ import sys
 
 from ta.agent.core import get_agent
 from ta.config import get_settings
+from ta.telemetry.langfuse_setup import init_langfuse
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -32,6 +33,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     mode = args.mode or get_settings().default_mode
+    # Tracing 設定 (OpenInference 経由で Langfuse へ) を Agent 生成より先に行う
+    init_langfuse()
     agent = get_agent()
 
     return asyncio.run(_main_async(agent, args, mode))

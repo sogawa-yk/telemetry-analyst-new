@@ -29,7 +29,6 @@ from agents import (
     Runner,
     set_default_openai_api,
     set_default_openai_client,
-    set_tracing_disabled,
 )
 from openai import AsyncOpenAI
 from openai.types.responses import ResponseTextDeltaEvent
@@ -67,9 +66,8 @@ class Agent:
         )
         set_default_openai_client(self._async_client)
         set_default_openai_api("responses")
-        # OCI 鍵で OpenAI 公式 trace endpoint に届けてしまい 401 を出すのを止める.
-        # トレースは Langfuse / OTel 側で取得する.
-        set_tracing_disabled(True)
+        # トレースの設定は ta.telemetry.langfuse_setup.init_langfuse() に集約.
+        # (Agent インスタンス生成前に init_langfuse を呼ぶ運用)
 
         # Pydantic の Conversations API シリアライズ警告 (str → content list 変換時に出る non-fatal)
         warnings.filterwarnings(
