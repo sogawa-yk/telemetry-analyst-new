@@ -20,13 +20,11 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from pathlib import Path
 
 from langfuse import Langfuse
 
 from ta.agent.core import get_agent
 from ta.telemetry.langfuse_setup import init_langfuse
-
 
 DATASET_NAME = "telemetry-analyst-golden"
 
@@ -85,7 +83,7 @@ def main() -> int:
                         "mode": mode,
                     },
                 )
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 print(f"  ERROR: {e}", file=sys.stderr)
                 root_span.update(output=f"ERROR: {e}", metadata={"kind": "agent-error"})
 

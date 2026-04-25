@@ -14,6 +14,8 @@ authors = [{ name = "sogawa-yk", email = "daybreaks.link@gmail.com" }]
 dependencies = [
     # LLM: OCI Enterprise AI Responses API / Conversations API (OpenAI SDK 互換)
     "openai>=1.60.0,<3.0.0",
+    # Agents SDK (Phase 0 で自前 ReAct ループを置換するため評価中)
+    "openai-agents>=0.14,<1.0",
 
     # API / HTTP
     "fastapi>=0.115",
@@ -30,9 +32,13 @@ dependencies = [
 
     # 可観測性 (LLM: Langfuse, ランタイム: OTel)
     "langfuse>=3.2.0,<4.0.0",
+    # Agents SDK の操作を OTel スパンとして emit し Langfuse へ転送する
+    "openinference-instrumentation-openai-agents>=0.1.0,<1.0.0",
     "opentelemetry-api>=1.33.1,<2.0.0",
     "opentelemetry-sdk>=1.33.1,<2.0.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.33.1,<2.0.0",
+    # Langfuse は OTLP/HTTP のみ受信するため http exporter も追加
+    "opentelemetry-exporter-otlp-proto-http>=1.33.1,<2.0.0",
     "opentelemetry-instrumentation-fastapi>=0.54b0",
     "opentelemetry-instrumentation-httpx>=0.54b0",
     "prometheus-client>=0.21.0",

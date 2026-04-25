@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     grafana_token: str | None = Field(None, alias="GRAFANA_TOKEN")
     grafana_external_url: str | None = Field(None, alias="GRAFANA_EXTERNAL_URL")
     mcp_grafana_url: str = Field(
-        "http://mcp-grafana.telemetry-analyst.svc:8000/sse", alias="MCP_GRAFANA_URL"
+        "http://mcp-grafana.telemetry-analyst.svc:8000/mcp", alias="MCP_GRAFANA_URL"
     )
     mcp_grafana_enabled: bool = Field(False, alias="MCP_GRAFANA_ENABLED")
 

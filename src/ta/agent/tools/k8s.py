@@ -1,15 +1,19 @@
-"""ec-shop を対象とする読み取り専用 K8s ツール群.
+"""ec-shop を対象とする読み取り専用 K8s function tools (Agents SDK 版).
 
-OpenAI Responses API の function tools 形式で提供する. 戻り値は LLM が読みやすい
-短文テキストに整形する. 書込み系 API は実装しない (ホワイトリスト方式の二重防御).
+OpenAI Agents SDK の `@function_tool` 互換ラッパで Agent に登録する.
+書込み系 API は実装しない (ホワイトリスト方式の二重防御 + RBAC).
+
+実装関数 (k8s_list_pods 等) は素の Python 関数として残し、テスト時は
+直接呼び出せるようにしておく. Agents SDK 用の FunctionTool は
+モジュール末尾で `function_tool(...)` を関数形式で適用して生成する.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from typing import Any
+from datetime import UTC, datetime, timedelta
 
+from agents import function_tool
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 
@@ -56,12 +60,12 @@ def _autoscaling() -> client.AutoscalingV2Api:
 
 
 # -----------------------------------------------------------------------------
-# スコープ境界 (監視対象 NS のみ許可)
+# スコープ境界 (監視対象 NS のみ許可) + 入力バリデーション
 # -----------------------------------------------------------------------------
 
 
 def _check_scope(namespace: str) -> str | None:
-    """許可された NS 以外は拒否. 返り値がエラーメッセージ (None なら許可)."""
+    """許可された NS 以外は拒否. None なら許可."""
     allowed = get_settings().target_namespace
     if namespace != allowed:
         return (
@@ -71,20 +75,51 @@ def _check_scope(namespace: str) -> str | None:
     return None
 
 
+_NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$")
+
+
+def _validate_name(name: str) -> str | None:
+    if not _NAME_RE.match(name):
+        return f"不正な Kubernetes リソース名: {name!r}"
+    return None
+
+
 # -----------------------------------------------------------------------------
-# ツール実装
+# helpers
 # -----------------------------------------------------------------------------
 
 
-@dataclass
-class ToolSpec:
-    name: str
-    description: str
-    parameters: dict[str, Any]
+def _age(ts: datetime | None) -> str:
+    if ts is None:
+        return "?"
+    delta = datetime.now(UTC) - ts
+    if delta.days >= 1:
+        return f"{delta.days}d"
+    h = delta.seconds // 3600
+    if h >= 1:
+        return f"{h}h"
+    m = delta.seconds // 60
+    return f"{m}m"
 
 
-def k8s_list_pods(namespace: str | None = None) -> str:
-    ns = namespace or get_settings().target_namespace
+def _truncate(s: str, max_chars: int, suffix: str = "\n... (truncated)") -> str:
+    if len(s) <= max_chars:
+        return s
+    return s[:max_chars] + suffix
+
+
+# -----------------------------------------------------------------------------
+# 実装関数 (素の Python 関数. テストから直接呼び出し可)
+# -----------------------------------------------------------------------------
+
+
+def k8s_list_pods() -> str:
+    """監視対象 namespace (ec-shop) の Pod 一覧を取得する.
+
+    状態 / restart 数 / age が分かる. 障害調査で最初の一手として使う.
+    他 namespace は権限外のため失敗する.
+    """
+    ns = get_settings().target_namespace
     if err := _check_scope(ns):
         return err
     try:
@@ -93,8 +128,11 @@ def k8s_list_pods(namespace: str | None = None) -> str:
         return f"K8s API エラー: {e.status} {e.reason}"
     if not pods:
         return f"NS `{ns}` に Pod はありません。"
-    lines = [f"Namespace `{ns}` の Pod 一覧 ({len(pods)} 件):", ""]
-    lines.append(f"{'NAME':<48} {'STATUS':<12} {'RESTARTS':<9} {'AGE':<10} {'NODE':<30}")
+    lines = [
+        f"Namespace `{ns}` の Pod 一覧 ({len(pods)} 件):",
+        "",
+        f"{'NAME':<48} {'STATUS':<12} {'RESTARTS':<9} {'AGE':<10} {'NODE':<30}",
+    ]
     for p in pods:
         restarts = sum((c.restart_count or 0) for c in (p.status.container_statuses or []))
         age = _age(p.metadata.creation_timestamp)
@@ -105,8 +143,17 @@ def k8s_list_pods(namespace: str | None = None) -> str:
     return "\n".join(lines)
 
 
-def k8s_describe_pod(name: str, namespace: str | None = None) -> str:
-    ns = namespace or get_settings().target_namespace
+def k8s_describe_pod(name: str) -> str:
+    """指定した Pod の詳細 (コンテナ状態、終了コード、直近イベント) を取得する.
+
+    CrashLoopBackOff や ImagePullBackOff などの原因特定に使う.
+
+    Args:
+        name: 調査する Pod の名前.
+    """
+    if err := _validate_name(name):
+        return err
+    ns = get_settings().target_namespace
     if err := _check_scope(ns):
         return err
     try:
@@ -165,9 +212,23 @@ def k8s_pod_logs(
     tail: int = 200,
     since_seconds: int = 900,
     previous: bool = False,
-    namespace: str | None = None,
 ) -> str:
-    ns = namespace or get_settings().target_namespace
+    """Pod のログを取得する (最大 tail 行 / since_seconds 秒前まで).
+
+    `previous=True` で直前のコンテナ終了時のログも取得可. 出力は 8KB で切詰め.
+
+    Args:
+        name: 調査する Pod の名前.
+        container: コンテナ名 (マルチコンテナ Pod の場合に指定. 省略時は単一コンテナを自動選択).
+        tail: 末尾何行を取得するか. 既定 200.
+        since_seconds: 何秒前からのログを取得するか. 既定 900 (15 分).
+        previous: True なら前回終了時のコンテナログを取得 (CrashLoop の根因調査に有用).
+    """
+    if err := _validate_name(name):
+        return err
+    if container and (err := _validate_name(container)):
+        return err
+    ns = get_settings().target_namespace
     if err := _check_scope(ns):
         return err
     try:
@@ -186,21 +247,22 @@ def k8s_pod_logs(
     return _truncate(logs, max_chars=8000, suffix="\n... (truncated)")
 
 
-def k8s_list_events(
-    namespace: str | None = None,
-    since_seconds: int = 900,
-    kind: str | None = None,
-) -> str:
-    ns = namespace or get_settings().target_namespace
+def k8s_list_events(since_seconds: int = 900, kind: str | None = None) -> str:
+    """監視対象 namespace の直近 since_seconds 秒のイベントを取得する.
+
+    OOMKilled / FailedScheduling / BackOff などの理由特定に必須.
+
+    Args:
+        since_seconds: 過去何秒分か. 既定 900 (15 分).
+        kind: 絞り込む Kind (Pod / Deployment 等). 未指定なら全て.
+    """
+    ns = get_settings().target_namespace
     if err := _check_scope(ns):
         return err
     try:
         events = _core().list_namespaced_event(namespace=ns).items
     except ApiException as e:
         return f"K8s API エラー: {e.status} {e.reason}"
-
-    # 時間で絞る
-    from datetime import UTC, datetime, timedelta
 
     cutoff = datetime.now(UTC) - timedelta(seconds=since_seconds)
     events = [
@@ -225,8 +287,12 @@ def k8s_list_events(
     return _truncate("\n".join(lines), max_chars=6000)
 
 
-def k8s_list_deployments(namespace: str | None = None) -> str:
-    ns = namespace or get_settings().target_namespace
+def k8s_list_deployments() -> str:
+    """監視対象 namespace の Deployment 一覧を取得する.
+
+    コンテナイメージのタグ確認 (直近デプロイ時刻の推定) に使う.
+    """
+    ns = get_settings().target_namespace
     if err := _check_scope(ns):
         return err
     try:
@@ -235,8 +301,11 @@ def k8s_list_deployments(namespace: str | None = None) -> str:
         return f"K8s API エラー: {e.status} {e.reason}"
     if not deps:
         return f"NS `{ns}` に Deployment はありません."
-    lines = [f"Namespace `{ns}` の Deployment ({len(deps)} 件):", ""]
-    lines.append(f"{'NAME':<32} {'READY':<10} {'UPDATED':<10} {'AVAILABLE':<10} {'AGE':<10}")
+    lines = [
+        f"Namespace `{ns}` の Deployment ({len(deps)} 件):",
+        "",
+        f"{'NAME':<32} {'READY':<10} {'UPDATED':<10} {'AVAILABLE':<10} {'AGE':<10}",
+    ]
     for d in deps:
         ready = f"{d.status.ready_replicas or 0}/{d.spec.replicas or 0}"
         lines.append(
@@ -253,8 +322,9 @@ def k8s_list_deployments(namespace: str | None = None) -> str:
     return "\n".join(lines)
 
 
-def k8s_list_services(namespace: str | None = None) -> str:
-    ns = namespace or get_settings().target_namespace
+def k8s_list_services() -> str:
+    """監視対象 namespace の Service 一覧を取得する."""
+    ns = get_settings().target_namespace
     if err := _check_scope(ns):
         return err
     try:
@@ -272,8 +342,12 @@ def k8s_list_services(namespace: str | None = None) -> str:
     return "\n".join(lines)
 
 
-def k8s_list_hpa(namespace: str | None = None) -> str:
-    ns = namespace or get_settings().target_namespace
+def k8s_list_hpa() -> str:
+    """監視対象 namespace の HorizontalPodAutoscaler 一覧を取得する.
+
+    負荷急増時のスケール追随状況を確認するのに使う.
+    """
+    ns = get_settings().target_namespace
     if err := _check_scope(ns):
         return err
     try:
@@ -294,180 +368,25 @@ def k8s_list_hpa(namespace: str | None = None) -> str:
 
 
 # -----------------------------------------------------------------------------
-# helpers
+# Agents SDK 用 FunctionTool ラッパ
 # -----------------------------------------------------------------------------
 
 
-def _age(ts) -> str:  # type: ignore[no-untyped-def]
-    if ts is None:
-        return "?"
-    from datetime import UTC, datetime
-
-    delta = datetime.now(UTC) - ts
-    if delta.days >= 1:
-        return f"{delta.days}d"
-    h = delta.seconds // 3600
-    if h >= 1:
-        return f"{h}h"
-    m = delta.seconds // 60
-    return f"{m}m"
+list_pods_tool = function_tool(k8s_list_pods)
+describe_pod_tool = function_tool(k8s_describe_pod)
+pod_logs_tool = function_tool(k8s_pod_logs)
+list_events_tool = function_tool(k8s_list_events)
+list_deployments_tool = function_tool(k8s_list_deployments)
+list_services_tool = function_tool(k8s_list_services)
+list_hpa_tool = function_tool(k8s_list_hpa)
 
 
-def _truncate(s: str, max_chars: int, suffix: str = "\n... (truncated)") -> str:
-    if len(s) <= max_chars:
-        return s
-    return s[:max_chars] + suffix
-
-
-# 入力バリデーション (パス/インジェクション対策)
-_NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$")
-
-
-def _validate_name(name: str) -> str | None:
-    if not _NAME_RE.match(name):
-        return f"不正な Kubernetes リソース名: {name!r}"
-    return None
-
-
-# -----------------------------------------------------------------------------
-# OpenAI Responses API 用の function tool spec + dispatcher
-# -----------------------------------------------------------------------------
-
-
-TOOL_SPECS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "name": "k8s_list_pods",
-        "description": (
-            "監視対象 namespace の Pod 一覧を取得する. 状態 / restart 数 / age が分かる. "
-            "障害調査で最初の一手として使う. 他 namespace は権限外のため失敗する."
-        ),
-        "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
-    {
-        "type": "function",
-        "name": "k8s_describe_pod",
-        "description": (
-            "指定した Pod の詳細 (コンテナ状態、終了コード、直近イベント) を取得する. "
-            "CrashLoopBackOff や ImagePullBackOff などの原因特定に使う."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {"name": {"type": "string", "description": "Pod 名"}},
-            "required": ["name"],
-            "additionalProperties": False,
-        },
-    },
-    {
-        "type": "function",
-        "name": "k8s_pod_logs",
-        "description": (
-            "Pod のログを取得する (最大 tail 行 / since_seconds 秒前まで). "
-            "previous=true で直前のコンテナ終了時のログも取得可. 出力は 8KB で切詰め."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "Pod 名"},
-                "container": {
-                    "type": "string",
-                    "description": "コンテナ名 (省略可、マルチコンテナ時に指定)",
-                },
-                "tail": {"type": "integer", "description": "末尾何行か (既定 200)", "default": 200},
-                "since_seconds": {
-                    "type": "integer",
-                    "description": "何秒前からのログか (既定 900 = 15 分)",
-                    "default": 900,
-                },
-                "previous": {
-                    "type": "boolean",
-                    "description": "前回終了時のコンテナログを取得するか (既定 false)",
-                    "default": False,
-                },
-            },
-            "required": ["name"],
-            "additionalProperties": False,
-        },
-    },
-    {
-        "type": "function",
-        "name": "k8s_list_events",
-        "description": (
-            "監視対象 namespace の直近 since_seconds 秒のイベントを取得する. "
-            "OOMKilled / FailedScheduling / BackOff などの理由特定に必須."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "since_seconds": {
-                    "type": "integer",
-                    "description": "過去何秒分か (既定 900)",
-                    "default": 900,
-                },
-                "kind": {
-                    "type": "string",
-                    "description": "絞り込む Kind (Pod / Deployment 等). 未指定なら全て",
-                },
-            },
-            "additionalProperties": False,
-        },
-    },
-    {
-        "type": "function",
-        "name": "k8s_list_deployments",
-        "description": (
-            "監視対象 namespace の Deployment 一覧を取得する. "
-            "コンテナイメージのタグ確認 (直近デプロイ時刻の推定) に使う."
-        ),
-        "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
-    {
-        "type": "function",
-        "name": "k8s_list_services",
-        "description": "監視対象 namespace の Service 一覧を取得する.",
-        "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
-    {
-        "type": "function",
-        "name": "k8s_list_hpa",
-        "description": (
-            "監視対象 namespace の HorizontalPodAutoscaler 一覧を取得する. "
-            "負荷急増時のスケール追随状況を確認するのに使う."
-        ),
-        "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
+ALL_TOOLS = [
+    list_pods_tool,
+    describe_pod_tool,
+    pod_logs_tool,
+    list_events_tool,
+    list_deployments_tool,
+    list_services_tool,
+    list_hpa_tool,
 ]
-
-
-_DISPATCH = {
-    "k8s_list_pods": k8s_list_pods,
-    "k8s_describe_pod": k8s_describe_pod,
-    "k8s_pod_logs": k8s_pod_logs,
-    "k8s_list_events": k8s_list_events,
-    "k8s_list_deployments": k8s_list_deployments,
-    "k8s_list_services": k8s_list_services,
-    "k8s_list_hpa": k8s_list_hpa,
-}
-
-
-def dispatch(name: str, arguments: dict[str, Any]) -> str:
-    fn = _DISPATCH.get(name)
-    if fn is None:
-        return f"不明なツール: {name}"
-
-    # 入力バリデーション
-    if "name" in arguments:
-        err = _validate_name(str(arguments["name"]))
-        if err:
-            return err
-    if arguments.get("container"):
-        err = _validate_name(str(arguments["container"]))
-        if err:
-            return err
-
-    try:
-        return fn(**arguments)  # type: ignore[arg-type]
-    except TypeError as e:
-        return f"ツール呼出し引数エラー: {e}"
-    except Exception as e:
-        return f"ツール実行エラー: {type(e).__name__}: {e}"

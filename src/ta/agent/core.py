@@ -1,40 +1,42 @@
-"""単一 ReAct エージェント本体.
+"""単一 ReAct エージェント本体 (OpenAI Agents SDK 版).
 
-OCI Enterprise AI の Responses API を直接呼ぶ. ReAct ループは Responses API 側が担当し、
-自前で「tool_call → tool_result → 再呼出」の while を回す必要がない…
-…と言いたいところだが、2026 時点の Responses API で MCP tools は自動実行される一方、
-function tools はクライアント側で実行した結果を `input` に追加して再呼出する形が標準.
+OCI Enterprise AI Responses API + Conversations API + Hosted MCP を、
+公式の OpenAI Agents SDK (`openai-agents`) 経由で利用する.
 
-そのため、このモジュールは以下の薄いループを回す:
-
-1. `client.responses.create(...)` を呼ぶ
-2. `response.output` に function_call があれば、対応する Python 関数を呼んで tool 実行
-3. その結果を input に追加して再呼出
-4. function_call が無くなったら最終応答テキストを返す
-
-MCP tools は OCI 側で自動実行されるため、ここで扱うのは function tools のみ.
+自前 ReAct ループ・関数呼出ループ・previous_response_id 排他処理は SDK が
+丸ごと吸収するため不要 (Phase 0-3 で削除).
 """
 
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
 import os
 import time
-from collections.abc import Iterator
+import warnings
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-try:
-    from langfuse.openai import OpenAI  # type: ignore[import-untyped]
-except ImportError:  # pragma: no cover
-    from openai import OpenAI
+from agents import (
+    Agent as SDKAgent,
+)
+from agents import (
+    ItemHelpers,
+    OpenAIConversationsSession,
+    RunConfig,
+    Runner,
+    set_default_openai_api,
+    set_default_openai_client,
+)
+from openai import AsyncOpenAI
+from openai.types.responses import ResponseTextDeltaEvent
 
 from ta.agent.prompts import __path__ as _PROMPTS_PKG
 from ta.agent.skills.loader import SkillRetriever
 from ta.agent.tools import k8s as k8s_tools
-from ta.agent.tools.grafana_mcp import grafana_mcp_tool_spec
+from ta.agent.tools.grafana_mcp import make_grafana_mcp_tool
 from ta.config import Mode, get_settings
 from ta.telemetry import otel_setup
 
@@ -56,13 +58,26 @@ class AgentResult:
 class Agent:
     def __init__(self) -> None:
         s = get_settings()
-        self._client = OpenAI(
+        # Agents SDK 用の AsyncOpenAI を OCI Enterprise AI に向ける
+        self._async_client = AsyncOpenAI(
             api_key=s.openai_api_key,
             base_url=s.openai_base_url,
-            project=s.oci_genai_project,
+            default_headers={"OpenAI-Project": s.oci_genai_project},
         )
+        set_default_openai_client(self._async_client)
+        set_default_openai_api("responses")
+        # トレースの設定は ta.telemetry.langfuse_setup.init_langfuse() に集約.
+        # (Agent インスタンス生成前に init_langfuse を呼ぶ運用)
+
+        # Pydantic の Conversations API シリアライズ警告 (str → content list 変換時に出る non-fatal)
+        warnings.filterwarnings(
+            "ignore",
+            message=r"Pydantic serializer warnings.*",
+            category=UserWarning,
+        )
+
         self._model = s.oci_genai_model
-        self._max_tool_calls = s.max_tool_calls
+        self._max_react_turns = s.max_tool_calls
         self._target_ns = s.target_namespace
         self._retriever = SkillRetriever(skills_dir=_SKILLS_DIR)
 
@@ -93,56 +108,51 @@ class Agent:
             parts.append(skill_section)
         return "\n\n---\n\n".join(parts)
 
+    def picked_skills(self, user_msg: str, mode: Mode) -> list[str]:
+        """Langfuse / OTel に流すために選ばれた skill 名を取り出す."""
+        return [s.name for s in self._retriever.pick(user_msg, mode, k=3)]
+
     # ------------------------------------------------------------------
-    # ツール実行 (function tools のみ. MCP tools は OCI 側で自動実行)
+    # SDK Agent の構築
     # ------------------------------------------------------------------
 
-    def _tools(self) -> list[dict[str, Any]]:
-        s = get_settings()
-        tools: list[dict[str, Any]] = []
-        if s.mcp_grafana_enabled:
-            tools.append(grafana_mcp_tool_spec())
-        tools.extend(k8s_tools.TOOL_SPECS)
-        return tools
+    def _build_sdk_agent(self, instructions: str) -> SDKAgent:
+        tools: list[Any] = list(k8s_tools.ALL_TOOLS)
+        if get_settings().mcp_grafana_enabled:
+            tools.append(make_grafana_mcp_tool())
+        return SDKAgent(
+            name="telemetry-analyst",
+            instructions=instructions,
+            model=self._model,
+            tools=tools,
+        )
 
-    def _run_function_tool(self, name: str, arguments_json: str) -> str:
-        try:
-            args = json.loads(arguments_json) if arguments_json else {}
-        except json.JSONDecodeError as e:
-            otel_setup.record_tool_invocation(name, "bad_args")
-            return f"ツール引数 JSON パースエラー: {e}"
-        tracer = otel_setup.get_tracer()
-        with tracer.start_as_current_span(f"tool.{name}") as span:
-            span.set_attribute("tool.name", name)
-            span.set_attribute("tool.arguments", arguments_json[:1000])
-            try:
-                result = k8s_tools.dispatch(name, args)
-                outcome = (
-                    "ok"
-                    if not result.startswith(("エラー", "K8s API エラー", "ツール"))
-                    else "error"
-                )
-                otel_setup.record_tool_invocation(name, outcome)
-                span.set_attribute("tool.outcome", outcome)
-                return result
-            except Exception as e:
-                otel_setup.record_tool_invocation(name, "exception")
-                span.record_exception(e)
-                raise
+    def _run_config(self, mode: Mode, metadata: dict[str, Any] | None) -> RunConfig:
+        return RunConfig(
+            trace_metadata={"mode": mode, **(metadata or {})},
+        )
 
     # ------------------------------------------------------------------
     # Conversations API (メモリ委任)
     # ------------------------------------------------------------------
 
-    def create_conversation(self, metadata: dict[str, Any] | None = None) -> str:
-        conv = self._client.conversations.create(metadata=metadata or {})  # type: ignore[attr-defined]
-        return conv.id  # type: ignore[no-any-return]
+    async def create_conversation(self, metadata: dict[str, Any] | None = None) -> str:
+        conv = await self._async_client.conversations.create(metadata=metadata or {})
+        return conv.id
+
+    def _session_for(self, conversation_id: str | None) -> OpenAIConversationsSession | None:
+        if not conversation_id:
+            return None
+        return OpenAIConversationsSession(
+            conversation_id=conversation_id,
+            openai_client=self._async_client,
+        )
 
     # ------------------------------------------------------------------
-    # ReAct ループ (function tools の繰返し実行)
+    # ReAct 実行 (SDK の Runner に丸投げ)
     # ------------------------------------------------------------------
 
-    def run(
+    async def run(
         self,
         user_msg: str,
         *,
@@ -152,197 +162,136 @@ class Agent:
     ) -> AgentResult:
         start = time.monotonic()
         instructions = self.build_instructions(user_msg, mode)
-        tools = self._tools()
-        tool_calls_record: list[dict[str, Any]] = []
+        sdk_agent = self._build_sdk_agent(instructions)
+        session = self._session_for(conversation_id)
 
-        # 初回: ユーザー入力を渡す
-        inputs: list[dict[str, Any]] | str = user_msg
-        kwargs: dict[str, Any] = {
-            "model": self._model,
-            "instructions": instructions,
-            "tools": tools,
-            "metadata": {"mode": mode, **(metadata or {})},
-        }
-        if conversation_id:
-            kwargs["conversation"] = conversation_id
+        result = await Runner.run(
+            sdk_agent,
+            input=user_msg,
+            session=session,
+            max_turns=self._max_react_turns,
+            run_config=self._run_config(mode, metadata),
+        )
 
-        response = self._client.responses.create(input=inputs, **kwargs)  # type: ignore[arg-type]
-
-        for _ in range(self._max_tool_calls):
-            function_calls = _extract_function_calls(response)
-            if not function_calls:
-                break
-
-            follow_up: list[dict[str, Any]] = []
-            for fc in function_calls:
-                name = fc["name"]
-                args = fc.get("arguments", "")
-                call_id = fc["call_id"]
-                result = self._run_function_tool(name, args)
-                tool_calls_record.append({"name": name, "arguments": args, "result": result[:500]})
-                follow_up.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": call_id,
-                        "output": result,
-                    }
-                )
-
-            kwargs_follow: dict[str, Any] = {
-                "model": self._model,
-                "tools": tools,
-            }
-            # Responses API は conversation と previous_response_id が排他のため、
-            # conversation があれば継続はそちらに任せ、なければ previous_response_id を使う.
-            if conversation_id:
-                kwargs_follow["conversation"] = conversation_id
-            else:
-                kwargs_follow["previous_response_id"] = response.id
-            response = self._client.responses.create(input=follow_up, **kwargs_follow)  # type: ignore[arg-type]
-
-        text = _extract_text(response)
+        tool_calls_record = _extract_tool_calls(result.new_items)
         otel_setup.record_response_latency(time.monotonic() - start, mode)
-        usage = getattr(response, "usage", None)
-        if usage is not None:
-            otel_setup.record_llm_tokens(
-                "input", int(getattr(usage, "input_tokens", 0) or 0), self._model
-            )
-            otel_setup.record_llm_tokens(
-                "output", int(getattr(usage, "output_tokens", 0) or 0), self._model
-            )
         return AgentResult(
-            text=text,
+            text=str(result.final_output) if result.final_output is not None else "",
             conversation_id=conversation_id,
             tool_calls=tool_calls_record,
-            response_id=getattr(response, "id", None),
+            response_id=getattr(result, "last_response_id", None),
         )
 
     # ------------------------------------------------------------------
-    # ストリーミング (Chainlit 用)
+    # ストリーミング (Chainlit / CLI 用)
     # ------------------------------------------------------------------
 
-    def run_stream(
+    async def run_stream(
         self,
         user_msg: str,
         *,
         mode: Mode = "engineer",
         conversation_id: str | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> Iterator[dict[str, Any]]:
-        """ReAct ループを回しつつ、逐次イベントを yield する.
+    ) -> AsyncIterator[dict[str, Any]]:
+        """SDK の stream_events を Chainlit 互換 4 種に正規化して逐次 yield する.
 
         event の種類:
-          - {"type": "delta", "text": "..."}            最終応答テキストの差分
-          - {"type": "tool_call", "name", "arguments"}  function tool 呼出 (Claude 用 UX)
-          - {"type": "tool_result", "name", "result"}   function tool 結果
-          - {"type": "done", "response_id", "text"}     最終
+          - {"type": "delta", "text": "..."}
+          - {"type": "tool_call", "name", "arguments"}
+          - {"type": "tool_result", "name", "result"}
+          - {"type": "done", "response_id", "text"}
         """
         start = time.monotonic()
         instructions = self.build_instructions(user_msg, mode)
-        tools = self._tools()
+        sdk_agent = self._build_sdk_agent(instructions)
+        session = self._session_for(conversation_id)
 
-        inputs: list[dict[str, Any]] | str = user_msg
-        kwargs: dict[str, Any] = {
-            "model": self._model,
-            "instructions": instructions,
-            "tools": tools,
-            "metadata": {"mode": mode, **(metadata or {})},
-        }
-        if conversation_id:
-            kwargs["conversation"] = conversation_id
+        text_parts: list[str] = []
+        # call_id -> tool 名 を覚えておき、tool_call_output_item で名前を引く
+        tool_name_by_call_id: dict[str, str] = {}
 
-        final_text_accum: list[str] = []
-        last_response_id: str | None = None
+        result = Runner.run_streamed(
+            sdk_agent,
+            input=user_msg,
+            session=session,
+            max_turns=self._max_react_turns,
+            run_config=self._run_config(mode, metadata),
+        )
 
-        for _ in range(self._max_tool_calls + 1):
-            # ストリーミング
-            with self._client.responses.stream(input=inputs, **kwargs) as stream:  # type: ignore[arg-type]
-                for event in stream:
-                    etype = getattr(event, "type", "")
-                    if etype == "response.output_text.delta":
-                        delta = getattr(event, "delta", "")
-                        if delta:
-                            final_text_accum.append(delta)
-                            yield {"type": "delta", "text": delta}
-                response = stream.get_final_response()
-
-            last_response_id = getattr(response, "id", None)
-            function_calls = _extract_function_calls(response)
-            if not function_calls:
-                break
-
-            follow_up: list[dict[str, Any]] = []
-            for fc in function_calls:
-                yield {
-                    "type": "tool_call",
-                    "name": fc["name"],
-                    "arguments": fc.get("arguments", ""),
-                }
-                result = self._run_function_tool(fc["name"], fc.get("arguments", ""))
-                yield {"type": "tool_result", "name": fc["name"], "result": result}
-                follow_up.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": fc["call_id"],
-                        "output": result,
-                    }
-                )
-
-            inputs = follow_up  # 次ループ
-            kwargs = {
-                "model": self._model,
-                "tools": tools,
-            }
-            # conversation と previous_response_id は排他
-            if conversation_id:
-                kwargs["conversation"] = conversation_id
-            else:
-                kwargs["previous_response_id"] = last_response_id
+        async for event in result.stream_events():
+            if event.type == "raw_response_event":
+                if isinstance(event.data, ResponseTextDeltaEvent):
+                    delta = event.data.delta or ""
+                    if delta:
+                        text_parts.append(delta)
+                        yield {"type": "delta", "text": delta}
+            elif event.type == "run_item_stream_event":
+                item = event.item
+                itype = getattr(item, "type", None)
+                if itype == "tool_call_item":
+                    raw = getattr(item, "raw_item", None)
+                    name = getattr(raw, "name", None) or getattr(raw, "type", "?")
+                    args = getattr(raw, "arguments", "") or ""
+                    call_id = getattr(raw, "call_id", None) or getattr(raw, "id", None)
+                    if call_id:
+                        tool_name_by_call_id[call_id] = str(name)
+                    otel_setup.record_tool_invocation(str(name), "called")
+                    yield {"type": "tool_call", "name": str(name), "arguments": args}
+                elif itype == "tool_call_output_item":
+                    raw = getattr(item, "raw_item", None)
+                    out = getattr(item, "output", "") or ""
+                    # function_call_output は raw が dict / SDK 型のいずれもありうる
+                    call_id = ""
+                    if isinstance(raw, dict):
+                        call_id = raw.get("call_id") or ""
+                    else:
+                        call_id = getattr(raw, "call_id", "") or ""
+                    name = tool_name_by_call_id.get(call_id) or "(tool)"
+                    yield {"type": "tool_result", "name": name, "result": str(out)}
+                # message_output_item は delta で逐次受信済みのため再 yield は不要
 
         otel_setup.record_response_latency(time.monotonic() - start, mode)
         yield {
             "type": "done",
-            "response_id": last_response_id,
-            "text": "".join(final_text_accum),
+            "response_id": getattr(result, "last_response_id", None),
+            "text": "".join(text_parts),
         }
 
 
 # ----------------------------------------------------------------------
-# Responses API レスポンスからの抽出ヘルパ
+# helpers
 # ----------------------------------------------------------------------
 
 
-def _extract_function_calls(response: Any) -> list[dict[str, Any]]:
-    """response.output から function_call アイテムを取り出す."""
+def _extract_tool_calls(new_items: list[Any]) -> list[dict[str, Any]]:
+    """Runner.run の result.new_items から tool 呼出を取り出して 1 行サマリにする."""
+    pending: dict[str, dict[str, Any]] = {}
     out: list[dict[str, Any]] = []
-    for item in getattr(response, "output", []) or []:
+    for item in new_items:
         itype = getattr(item, "type", None)
-        if itype == "function_call":
-            out.append(
-                {
-                    "call_id": getattr(item, "call_id", None),
-                    "name": getattr(item, "name", ""),
-                    "arguments": getattr(item, "arguments", "") or "",
-                }
-            )
+        if itype == "tool_call_item":
+            raw = getattr(item, "raw_item", None)
+            name = getattr(raw, "name", None) or getattr(raw, "type", "?")
+            args = getattr(raw, "arguments", "") or ""
+            call_id = getattr(raw, "call_id", None) or getattr(raw, "id", None) or ""
+            pending[call_id] = {"name": str(name), "arguments": args}
+        elif itype == "tool_call_output_item":
+            raw = getattr(item, "raw_item", None)
+            output = getattr(item, "output", "") or ""
+            if isinstance(raw, dict):
+                call_id = raw.get("call_id") or ""
+            else:
+                call_id = getattr(raw, "call_id", "") or ""
+            base = pending.pop(call_id, {"name": "(tool)", "arguments": ""})
+            out.append({**base, "result": str(output)[:500]})
+    # output が来ずに残った tool_call も保存
+    for base in pending.values():
+        out.append({**base, "result": ""})
     return out
 
 
-def _extract_text(response: Any) -> str:
-    """response.output_text or response.output から最終テキストを抽出."""
-    # SDK が output_text を提供していれば優先
-    text = getattr(response, "output_text", None)
-    if text:
-        return str(text)
-
-    # fallback: output からテキストを手繰る
-    parts: list[str] = []
-    for item in getattr(response, "output", []) or []:
-        if getattr(item, "type", None) == "message":
-            for content in getattr(item, "content", []) or []:
-                if getattr(content, "type", None) == "output_text":
-                    parts.append(getattr(content, "text", "") or "")
-    return "".join(parts)
+__all__ = ["Agent", "AgentResult", "ItemHelpers", "get_agent", "get_agent_sync_run"]
 
 
 # ----------------------------------------------------------------------
@@ -356,10 +305,21 @@ _agent: Agent | None = None
 def get_agent() -> Agent:
     global _agent
     if _agent is None:
-        # LOG LEVEL など軽い副作用はここで
         log_level = os.environ.get("TA_LOG_LEVEL", "INFO")
-        import logging
-
         logging.basicConfig(level=log_level)
         _agent = Agent()
     return _agent
+
+
+def get_agent_sync_run(
+    user_msg: str,
+    *,
+    mode: Mode = "engineer",
+    conversation_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> AgentResult:
+    """同期文脈 (CLI など) から Agent.run を呼ぶためのヘルパ."""
+    agent = get_agent()
+    return asyncio.run(
+        agent.run(user_msg, mode=mode, conversation_id=conversation_id, metadata=metadata)
+    )

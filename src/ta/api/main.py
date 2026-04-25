@@ -72,12 +72,12 @@ def healthz() -> dict[str, str]:
 
 
 @app.post("/conversations", response_model=ConversationCreateResponse)
-def create_conversation(req: ConversationCreateRequest) -> ConversationCreateResponse:
+async def create_conversation(req: ConversationCreateRequest) -> ConversationCreateResponse:
     agent = get_agent()
     metadata = {"source": "chainlit", "mode": req.mode}
     if req.session_id:
         metadata["session_id"] = req.session_id
-    conv_id = agent.create_conversation(metadata=metadata)
+    conv_id = await agent.create_conversation(metadata=metadata)
     return ConversationCreateResponse(conversation_id=conv_id)
 
 
@@ -97,9 +97,7 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
         metadata = {}
         if req.session_id:
             metadata["session_id"] = req.session_id
-        # agent.run_stream は同期ジェネレータなので、ブロッキングを逃すために
-        # asyncio.to_thread は使わず直接イテレート (1 リクエスト = 1 タスク、軽負荷想定)
-        for event in agent.run_stream(
+        async for event in agent.run_stream(
             req.message,
             mode=req.mode,
             conversation_id=req.conversation_id,
