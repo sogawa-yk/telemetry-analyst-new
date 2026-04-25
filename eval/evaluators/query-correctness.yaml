@@ -1,0 +1,29 @@
+name: "Query Correctness (PromQL/LogQL)"
+score_type: numeric
+variables: [input, actual_tools, tool_arguments]
+prompt: |
+  AI エージェントが実行した PromQL / LogQL / TraceQL クエリの妥当性を評価します。
+
+  ユーザー質問: {{input}}
+  呼ばれたツール: {{actual_tools}}
+  クエリ引数 (JSON): {{tool_arguments}}
+
+  採点観点:
+   - 時間範囲 (`[5m]`〜`[1h]`) は適切か (全期間スキャンは減点)
+   - ラベル (`namespace="ec-shop"`) で絞り込んでいるか
+   - Loki に `limit` がついているか
+   - histogram 系で `_bucket` + `rate` + `histogram_quantile` の順序が正しいか
+   - `sum by (...)` / `topk` などで集計がされているか
+   - クエリ言語の文法的に正しいか
+
+  ツールが一つも呼ばれていない場合は評価対象外として 1.0 を返してください (回答に
+  クエリが含まれない場合も同様).
+
+  1.0 = 全クエリが良い / 0.5 = 一部懸念 / 0.0 = 明確な誤りや禁止パターン
+
+  JSON を返してください: {"score": float, "rationale": string}
+
+trigger:
+  target: observations
+  filter:
+    metadata.kind: "agent-main-response"

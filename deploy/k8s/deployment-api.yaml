@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ta-agent
+  namespace: telemetry-analyst
+  labels:
+    app: ta-agent
+    component: api
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: ta-agent
+      component: api
+  template:
+    metadata:
+      labels:
+        app: ta-agent
+        component: api
+    spec:
+      serviceAccountName: ta-agent
+      imagePullSecrets:
+        - name: ocir
+      containers:
+        - name: api
+          image: syd.ocir.io/orasejapan/telemetry-analyst:v0.2.6
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: ta-agent-config
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: oci-genai-key
+                  key: api_key
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-keys
+                  key: public_key
+                  optional: true
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-keys
+                  key: secret_key
+                  optional: true
+            - name: GRAFANA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ta-agent-grafana
+                  key: GRAFANA_TOKEN
+                  optional: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: 2
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30

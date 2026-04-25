@@ -1,0 +1,72 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ta-agent
+  namespace: telemetry-analyst
+  labels:
+    app: ta-agent
+  annotations:
+    oci-native-ingress.oraclecloud.com/backend-tls-enabled: "false"
+    oci-native-ingress.oraclecloud.com/healthcheck-protocol: HTTP
+    oci-native-ingress.oraclecloud.com/healthcheck-path: /
+    oci-native-ingress.oraclecloud.com/https-listener-port: "443"
+spec:
+  ingressClassName: ic
+  rules:
+    - host: ta.sogawa-yk.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ta-agent-ui
+                port:
+                  number: 8081
+    - host: ta-api.sogawa-yk.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ta-agent
+                port:
+                  number: 8080
+  tls:
+    - hosts:
+        - ta.sogawa-yk.com
+        - ta-api.sogawa-yk.com
+      secretName: wildcard-sogawa-yk-com-tls
+---
+# MCP Grafana は healthcheck path が異なる (/healthz) ので別 Ingress に分離.
+# これにより OCI LB の backendset が独立し、ヘルスチェックパスも別に設定できる.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ta-mcp
+  namespace: telemetry-analyst
+  labels:
+    app: mcp-grafana
+  annotations:
+    oci-native-ingress.oraclecloud.com/backend-tls-enabled: "false"
+    oci-native-ingress.oraclecloud.com/healthcheck-protocol: HTTP
+    oci-native-ingress.oraclecloud.com/healthcheck-path: /healthz
+    oci-native-ingress.oraclecloud.com/https-listener-port: "443"
+spec:
+  ingressClassName: ic
+  rules:
+    - host: ta-mcp.sogawa-yk.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-grafana
+                port:
+                  number: 8000
+  tls:
+    - hosts:
+        - ta-mcp.sogawa-yk.com
+      secretName: wildcard-sogawa-yk-com-tls

@@ -1,0 +1,27 @@
+name: "Tool Selection Optimality"
+score_type: numeric  # 0.0 - 1.0
+variables: [input, output, expected_tools, actual_tools]
+prompt: |
+  あなたは SRE で、AI エージェントの診断トレースをレビューしています。
+
+  ユーザー質問: {{input}}
+  エージェント回答: {{output}}
+  期待されるツール: {{expected_tools}}
+  実際に呼ばれたツール: {{actual_tools}}
+
+  「ツール選定の最短性」を 0.0–1.0 で採点してください:
+   - 1.0: 最小必要なツールで、不要な呼出がない
+   - 0.7: 概ね妥当だが軽度の冗長性
+   - 0.5: 結論には至るが明確な無駄呼出がある
+   - 0.2: 重要なツールの抜けまたは全く違うツール選択
+   - 0.0: 全く不適切
+
+  **重要**: 回答に質問内容 (例: 役割紹介) でツール呼出が不要な場合、
+  呼出 0 で正解なら 1.0 とします。逆に不要にツールを呼んでいれば 0.3 以下にします。
+
+  JSON を返してください: {"score": float, "rationale": string}
+
+trigger:
+  target: observations
+  filter:
+    metadata.kind: "agent-main-response"

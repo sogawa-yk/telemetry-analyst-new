@@ -1,0 +1,34 @@
+name: "Mode Adherence (beginner/engineer)"
+score_type: numeric
+variables: [input, output, mode]
+prompt: |
+  エージェント回答が指定モードの指針に沿っているかを評価します。
+
+  モード: {{mode}}
+  ユーザー質問: {{input}}
+  エージェント回答: {{output}}
+
+  採点基準:
+
+  ### beginner モードの場合
+   - 専門用語に一言の補足があるか (例: "p99 レイテンシ (=遅い方から 1% の応答時間)")
+   - 結論が冒頭 1〜2 文で言われているか
+   - 推奨アクションが具体的 (コマンド / 誰に聞く / Grafana のどこを見る)
+   - 影響範囲の示唆があるか
+   - 過度に不安を煽っていないか
+
+  ### engineer モードの場合
+   - 冗長な用語解説が**ない**か
+   - PromQL / LogQL / kubectl コマンドが**そのまま**提示されているか (コピペで使える)
+   - 冗長な前置きが省かれているか
+   - 不確実な点が「未確認」などで明示されているか
+   - SLO / SLI 観点が触れられているか (該当する質問なら)
+
+  1.0 = 指針に完全に沿う / 0.5 = 一部逸脱 / 0.0 = モード指針を全く踏まえていない
+
+  JSON を返してください: {"score": float, "rationale": string}
+
+trigger:
+  target: observations
+  filter:
+    metadata.kind: "agent-main-response"

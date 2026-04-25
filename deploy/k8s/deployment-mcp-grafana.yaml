@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-grafana
+  namespace: telemetry-analyst
+  labels:
+    app: mcp-grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-grafana
+  template:
+    metadata:
+      labels:
+        app: mcp-grafana
+    spec:
+      containers:
+        - name: mcp-grafana
+          image: docker.io/mcp/grafana:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--transport=sse"
+            - "--address=0.0.0.0:8000"
+          ports:
+            - containerPort: 8000
+              name: sse
+          env:
+            - name: GRAFANA_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: ta-agent-config
+                  key: GRAFANA_URL
+            - name: GRAFANA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ta-agent-grafana
+                  key: GRAFANA_TOKEN
+                  optional: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

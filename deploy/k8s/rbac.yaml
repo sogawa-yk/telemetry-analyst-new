@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ta-agent
+  namespace: telemetry-analyst
+  labels:
+    app: ta-agent
+
+---
+# ec-shop NS に対する読み取り権限のみ付与する (最小権限)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ta-agent-readonly
+  namespace: ec-shop
+  labels:
+    app: ta-agent
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - services
+      - events
+      - configmaps
+    verbs: [get, list, watch]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - replicasets
+      - statefulsets
+      - daemonsets
+    verbs: [get, list, watch]
+  - apiGroups: ["autoscaling"]
+    resources:
+      - horizontalpodautoscalers
+    verbs: [get, list, watch]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ta-agent-readonly
+  namespace: ec-shop
+  labels:
+    app: ta-agent
+subjects:
+  - kind: ServiceAccount
+    name: ta-agent
+    namespace: telemetry-analyst
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ta-agent-readonly

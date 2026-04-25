@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: telemetry-analyst
+  labels:
+    name: telemetry-analyst
+    app.kubernetes.io/part-of: telemetry-analyst
+    # OCI Native Ingress Controller の mutating webhook で
+    # Pod に readiness gate を注入してもらうためのオプトイン
+    podreadiness.ingress.oraclecloud.com/pod-readiness-gate-inject: enabled

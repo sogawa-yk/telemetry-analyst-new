@@ -1,0 +1,28 @@
+name: "Skill Pick Accuracy"
+score_type: numeric
+variables: [input, selected_skills, mode]
+prompt: |
+  ユーザー質問から動的注入される Skill (playbook) の選択が妥当かを評価します.
+
+  ユーザー質問: {{input}}
+  モード: {{mode}}
+  実際に注入された Skill: {{selected_skills}}
+
+  参考:
+   - 質問が「遅い / latency / p99」→ latency-regression が選ばれるべき
+   - 質問が「5xx / エラー / 急増」→ error-rate-spike が選ばれるべき
+   - 質問が「crashloop / restart / 再起動」→ pod-crashloop が選ばれるべき
+   - 質問が「OOM / メモリ」→ oom-kill が選ばれるべき
+   - 質問が「下流 / 依存 / DB / 外部API」→ downstream-dependency
+   - 常時注入: cost-aware-query, explain-{mode}
+
+  1.0 = 適切な skill を 1〜3 本選び、モード適合の explain-* も入っている
+  0.5 = 1 つ取りこぼし / 余計な skill が混ざる
+  0.0 = 全く見当違い
+
+  JSON を返してください: {"score": float, "rationale": string}
+
+trigger:
+  target: observations
+  filter:
+    metadata.kind: "agent-main-response"

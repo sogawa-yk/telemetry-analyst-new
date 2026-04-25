@@ -1,0 +1,96 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "telemetry-analyst"
+version = "0.2.0"
+description = "Telemetry Analyst エージェント — ec-shop を対象に Prometheus/Loki/Tempo を横断診断する単一 ReAct エージェント"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [{ name = "sogawa-yk", email = "daybreaks.link@gmail.com" }]
+
+dependencies = [
+    # LLM: OCI Enterprise AI Responses API / Conversations API (OpenAI SDK 互換)
+    "openai>=1.60.0,<3.0.0",
+
+    # API / HTTP
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sse-starlette>=2.1",
+    "httpx>=0.27",
+
+    # 設定 / データ
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    "pyyaml>=6.0",
+    "python-frontmatter>=1.1",
+    "jinja2>=3.1",
+
+    # 可観測性 (LLM: Langfuse, ランタイム: OTel)
+    "langfuse>=3.2.0,<4.0.0",
+    "opentelemetry-api>=1.33.1,<2.0.0",
+    "opentelemetry-sdk>=1.33.1,<2.0.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.33.1,<2.0.0",
+    "opentelemetry-instrumentation-fastapi>=0.54b0",
+    "opentelemetry-instrumentation-httpx>=0.54b0",
+    "prometheus-client>=0.21.0",
+    "structlog>=24.1",
+
+    # レジリエンス
+    "tenacity>=9.0",
+
+    # Kubernetes (ec-shop NS の読取専用アクセス)
+    "kubernetes>=30.1.0,<32.0.0",
+]
+
+[project.optional-dependencies]
+ui = [
+    "chainlit>=1.3",
+]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-httpx>=0.32",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[project.scripts]
+ta-agent = "ta.api.main:run"
+ta-cli = "ta.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"ta.agent.prompts" = ["*.md"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "C4", "SIM", "RUF"]
+ignore = ["E501", "S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "langfuse.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "langfuse: Langfuse 接続が必要な評価テスト",
+    "integration: 外部サービス (OCI / Grafana / K8s) 接続が必要なテスト",
+]

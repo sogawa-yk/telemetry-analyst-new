@@ -1,0 +1,83 @@
+# ※ Langfuse の LLM Connection が OpenAI-Project カスタムヘッダに対応しない場合の
+# フォールバック. 対応している場合はこのファイルは apply 不要.
+#
+# このプロキシは OpenAI 互換リクエストを受け、OCI Enterprise AI に中継する際に
+# `OpenAI-Project` ヘッダを付与する. Langfuse はこのプロキシをエンドポイントとして指定する.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-proxy-config
+  namespace: telemetry-analyst
+data:
+  config.yaml: |
+    model_list:
+      - model_name: oci-gpt
+        litellm_params:
+          model: openai/openai.gpt-4.1
+          api_base: https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com/openai/v1
+          api_key: os.environ/OPENAI_API_KEY
+          extra_headers:
+            OpenAI-Project: ocid1.generativeaiproject.oc1.ap-osaka-1.amaaaaaassl65iqak67q6dr5zu6jqoimgf54sylota5devqglzkkoenxznxa
+    general_settings:
+      master_key: os.environ/LITELLM_MASTER_KEY
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm-proxy
+  namespace: telemetry-analyst
+  labels:
+    app: litellm-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: litellm-proxy
+  template:
+    metadata:
+      labels:
+        app: litellm-proxy
+    spec:
+      containers:
+        - name: litellm
+          image: ghcr.io/berriai/litellm:main-latest
+          args: ["--config", "/etc/litellm/config.yaml", "--port", "4000"]
+          ports:
+            - containerPort: 4000
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: oci-genai-key
+                  key: api_key
+            - name: LITELLM_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-master
+                  key: master_key
+                  optional: true
+          volumeMounts:
+            - name: cfg
+              mountPath: /etc/litellm
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+      volumes:
+        - name: cfg
+          configMap:
+            name: litellm-proxy-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm-proxy
+  namespace: telemetry-analyst
+spec:
+  selector:
+    app: litellm-proxy
+  ports:
+    - name: http
+      port: 4000
+      targetPort: 4000

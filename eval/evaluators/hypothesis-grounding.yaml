@@ -1,0 +1,26 @@
+name: "Hypothesis Grounding"
+score_type: numeric
+variables: [input, output]
+prompt: |
+  AI エージェントが提示した仮説に、根拠となる数値 / ログ / trace が添えられているかを評価します。
+
+  ユーザー質問: {{input}}
+  エージェント回答: {{output}}
+
+  採点観点:
+   - 仮説が明示されているか (「〜が原因と思われる」等)
+   - 各仮説に具体的な根拠 (メトリクス値、ログ抜粋、trace id 等) が添えられているか
+   - 不確実性が隠されていないか (未確認点は「未確認」と明示されているか)
+   - "症状 → 仮説 → 根拠 → 推奨アクション" の型に沿っているか
+
+  1.0 = 全仮説に具体的な根拠 + 型に沿う
+  0.6 = 根拠がある仮説と無いものが混在
+  0.3 = 根拠が薄い / 憶測が多い
+  0.0 = 根拠ゼロ
+
+  JSON を返してください: {"score": float, "rationale": string}
+
+trigger:
+  target: observations
+  filter:
+    metadata.kind: "agent-main-response"

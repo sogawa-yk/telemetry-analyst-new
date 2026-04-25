@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ta-agent
+  namespace: telemetry-analyst
+  labels:
+    app: ta-agent
+    component: api
+spec:
+  selector:
+    app: ta-agent
+    component: api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ta-agent-ui
+  namespace: telemetry-analyst
+  labels:
+    app: ta-agent
+    component: ui
+spec:
+  selector:
+    app: ta-agent
+    component: ui
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-grafana
+  namespace: telemetry-analyst
+  labels:
+    app: mcp-grafana
+spec:
+  selector:
+    app: mcp-grafana
+  ports:
+    - name: sse
+      port: 8000
+      targetPort: 8000
