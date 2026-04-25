@@ -165,6 +165,11 @@ class Agent:
         sdk_agent = self._build_sdk_agent(instructions)
         session = self._session_for(conversation_id)
 
+        # Phase C-2: skill 選択結果と prompt 長を OTel メトリクスへ
+        otel_setup.record_prompt_chars(len(instructions), mode)
+        for skill_name in self.picked_skills(user_msg, mode):
+            otel_setup.record_skill_hit(skill_name, mode)
+
         result = await Runner.run(
             sdk_agent,
             input=user_msg,
@@ -175,6 +180,7 @@ class Agent:
 
         tool_calls_record = _extract_tool_calls(result.new_items)
         otel_setup.record_response_latency(time.monotonic() - start, mode)
+        otel_setup.record_react_turns(len(tool_calls_record), mode)
         return AgentResult(
             text=str(result.final_output) if result.final_output is not None else "",
             conversation_id=conversation_id,
@@ -207,9 +213,15 @@ class Agent:
         sdk_agent = self._build_sdk_agent(instructions)
         session = self._session_for(conversation_id)
 
+        # Phase C-2: skill / prompt 計装
+        otel_setup.record_prompt_chars(len(instructions), mode)
+        for skill_name in self.picked_skills(user_msg, mode):
+            otel_setup.record_skill_hit(skill_name, mode)
+
         text_parts: list[str] = []
         # call_id -> tool 名 を覚えておき、tool_call_output_item で名前を引く
         tool_name_by_call_id: dict[str, str] = {}
+        turn_count = 0
 
         result = Runner.run_streamed(
             sdk_agent,
@@ -237,6 +249,7 @@ class Agent:
                     if call_id:
                         tool_name_by_call_id[call_id] = str(name)
                     otel_setup.record_tool_invocation(str(name), "called")
+                    turn_count += 1
                     yield {"type": "tool_call", "name": str(name), "arguments": args}
                 elif itype == "tool_call_output_item":
                     raw = getattr(item, "raw_item", None)
@@ -252,6 +265,7 @@ class Agent:
                 # message_output_item は delta で逐次受信済みのため再 yield は不要
 
         otel_setup.record_response_latency(time.monotonic() - start, mode)
+        otel_setup.record_react_turns(turn_count, mode)
         yield {
             "type": "done",
             "response_id": getattr(result, "last_response_id", None),

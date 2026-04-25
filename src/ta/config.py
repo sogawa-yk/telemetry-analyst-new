@@ -57,6 +57,16 @@ class Settings(BaseSettings):
     skills_dir: str = Field("skills", alias="TA_SKILLS_DIR")
     memory_dir: str = Field("memory", alias="TA_MEMORY_DIR")
 
+    # Phase C-1: チューニング項目 (Iter ごとに調整可能)
+    # PromQL の rate() デフォルト評価窓. mode_engineer.md にテンプレ展開
+    promql_rate_window: str = Field("5m", alias="TA_PROMQL_RATE_WINDOW")
+    # LogQL の limit デフォルト. トークン節約用
+    loki_limit_default: int = Field(200, alias="TA_LOKI_LIMIT_DEFAULT")
+    # Skill retriever の最低スコア (これ未満は注入しない. 単純 substring score=2/trigger)
+    skill_retriever_threshold: int = Field(1, alias="TA_SKILL_RETRIEVER_THRESHOLD")
+    # ツール 1 件の戻り値最大文字数 (LLM コンテキスト節約)
+    max_tool_output_chars: int = Field(8000, alias="TA_MAX_TOOL_OUTPUT_CHARS")
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

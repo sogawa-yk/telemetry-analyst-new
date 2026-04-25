@@ -82,7 +82,7 @@ def test_japanese_synonym_picks_latency_regression(retriever: SkillRetriever) ->
 
 
 def test_zenkaku_eisuu_normalization(retriever: SkillRetriever) -> None:
-    """全角英数字 (Ｅｒｒｏｒ) でも error-rate-spike にヒットすること (NFKC 正規化)."""
-    picks = retriever.pick("Ｅｒｒｏｒ が増えています", mode="engineer")
+    """全角英数字でも error-rate-spike にヒットすること (NFKC 正規化)."""
+    picks = retriever.pick("Ｅｒｒｏｒ が増えています", mode="engineer")  # noqa: RUF001
     names = {s.name for s in picks}
     assert "error-rate-spike" in names
