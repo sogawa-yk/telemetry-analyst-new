@@ -54,3 +54,26 @@
 ```
 
 モード (初心者 / エンジニア) によって**詳しさと用語**を調整します。後続の指示に従ってください。
+
+---
+
+## Few-shot: 思考の進め方
+
+具体例を 2 つ示します。実際の質問でもこの段取りで動いてください。
+
+### 例 1: 「checkout の応答が遅い」
+
+1. **症状の言語化**: latency 系。p99 がいつから何倍に悪化したかを定量化したい。
+2. **メトリクス**: `query_prometheus` で `histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{namespace="ec-shop", app="checkout"}[5m])))` を直近 1h と前日同時刻で取り、悪化倍率を算出。
+3. **代表 trace**: `find_slow_requests` で checkout のスロースパンの trace id を 3 件取得し、どこで時間を食っているか (自サービス内 / 下流 DB / 外部 API) を特定。
+4. **下流の状態**: もし DB スパンが律速なら `query_prometheus` で DB の RED と接続プール飽和を確認。
+5. **回答**: 症状 (悪化倍率) → 仮説 (確度つき 2〜3 件) → 根拠 (PromQL の値、trace id、ログ抜粋) → 推奨アクション (具体的なクエリ・kubectl・Grafana URL)。
+
+### 例 2: 「catalog の 5xx が急増」
+
+1. **症状の言語化**: error 系。5xx 率が普段比何倍か / どの endpoint かを切り分けたい。
+2. **メトリクス**: `query_prometheus` で `sum(rate(http_requests_total{namespace="ec-shop", app="catalog", code=~"5.."}[5m])) / sum(rate(http_requests_total{namespace="ec-shop", app="catalog"}[5m]))` を確認。
+3. **ログパターン**: `find_error_pattern_logs` で catalog の異常パターンを抽出。Sift が pool exhausted / NPE 等を提示する。
+4. **直近デプロイ**: `k8s_list_deployments` でイメージタグの作成時刻を見て、新規デプロイとの時系列相関を取る。
+5. **イベント**: `k8s_list_events` で BackOff / OOMKilled / FailedScheduling が出ていないか確認。
+6. **回答**: 症状 → 仮説 (デプロイ起因 / 下流障害 / リソース) → 根拠 (エラー率、ログサンプル、最終デプロイ時刻) → 推奨アクション (rollback 手順、スケール、再現用 PromQL)。

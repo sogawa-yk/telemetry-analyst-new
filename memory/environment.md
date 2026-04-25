@@ -26,6 +26,73 @@
 - カナリアデプロイを使っている時間帯 (平日 10:00-12:00 JST) は一時的に latency が揺れる可能性
 - 深夜バッチ (JST 02:00-04:00) 中は一部メトリクスが通常と異なる挙動を示すことがある
 
+### 障害パターン早見表 (旧版 playbook 由来)
+
+| 症状 | 第一に疑う原因 | 確認手段 |
+| --- | --- | --- |
+| 5xx 急増 (HTTP storm) | 直近デプロイ / 下流 (DB) 接続枯渇 / メモリ逼迫 | `k8s_list_deployments` のイメージタグ時刻 / `find_error_pattern_logs` |
+| latency 悪化 | CPU throttling / GC スパイク / 下流レイテンシ | CPU throttling PromQL → `find_slow_requests` で span ツリー |
+| Pod 再起動ループ | OOMKilled / liveness probe 失敗 / 設定不備 | `k8s_list_events` の reason / `k8s_pod_logs(previous=true)` |
+| DB プール枯渇 | 同時接続数の急増 / コネクションリーク | アプリログの `pool exhausted` / 接続数メトリクス |
+| 容量逼迫 (Evicted) | ノードの memory pressure / disk pressure | Event の `Evicted` reason / Node 状態 |
+
+## クエリテンプレート (ec-shop 想定)
+
+LLM はここの式をベースに `app` ラベルや時間範囲を差替えて使うこと。`<svc>` は `checkout` `catalog` 等。
+
+### Prometheus
+
+- **エラー率** (5xx):
+  ```
+  sum(rate(http_requests_total{namespace="ec-shop", app="<svc>", code=~"5.."}[5m]))
+    / sum(rate(http_requests_total{namespace="ec-shop", app="<svc>"}[5m]))
+  ```
+
+- **p99 latency**:
+  ```
+  histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{namespace="ec-shop", app="<svc>"}[5m])))
+  ```
+
+- **CPU throttling 比率** (>0.05 で要警戒):
+  ```
+  rate(container_cpu_cfs_throttled_periods_total{namespace="ec-shop", pod=~"<svc>.*"}[5m])
+    / rate(container_cpu_cfs_periods_total{namespace="ec-shop", pod=~"<svc>.*"}[5m])
+  ```
+
+- **メモリ使用率** (limit 比 / 0.9 超で OOM 警戒):
+  ```
+  container_memory_working_set_bytes{namespace="ec-shop", pod=~"<svc>.*"}
+    / container_spec_memory_limit_bytes{namespace="ec-shop", pod=~"<svc>.*"}
+  ```
+
+- **HPA 飽和** (current=max なら頭打ち):
+  ```
+  kube_horizontalpodautoscaler_status_current_replicas{namespace="ec-shop"}
+  / kube_horizontalpodautoscaler_spec_max_replicas{namespace="ec-shop"}
+  ```
+
+- **直近 OOMKilled の有無**:
+  ```
+  kube_pod_container_status_last_terminated_reason{namespace="ec-shop", reason="OOMKilled"}
+  ```
+
+### LogQL
+
+- **エラー抽出 (起点)**:
+  ```
+  {namespace="ec-shop", app="<svc>"} |~ "(?i)(error|exception|timeout|panic)" | json | limit 200
+  ```
+
+- **特定パターン頻度** (Loki stats):
+  ```
+  count_over_time({namespace="ec-shop", app="<svc>"} |= "<keyword>" [15m])
+  ```
+
+### Tempo
+
+- スローエンドポイント抽出: `find_slow_requests(service="<svc>")`
+- 個別 span ツリー: `get_trace_by_id(trace_id)`
+
 ## 過去インシデント (参考、随時追記)
 
 - (ユーザーから過去事例を共有してもらい、ここに追記する)

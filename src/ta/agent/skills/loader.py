@@ -8,6 +8,7 @@ retrieve 戦略は初期版ではキーワード一致 + mode フィルタ。後
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -34,10 +35,12 @@ class Skill:
         if not self.triggers:
             return 1
 
-        q_lower = query.lower()
+        # 半角/全角・大文字小文字の揺れを吸収するため NFKC + casefold で正規化
+        q_norm = unicodedata.normalize("NFKC", query).casefold()
         score = 0
         for t in self.triggers:
-            if t.lower() in q_lower:
+            t_norm = unicodedata.normalize("NFKC", t).casefold()
+            if t_norm and t_norm in q_norm:
                 score += 2
         return score
 

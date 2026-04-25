@@ -161,7 +161,52 @@ def k8s_describe_pod(name: str) -> str:
     except ApiException as e:
         return f"K8s API エラー: {e.status} {e.reason}"
 
-    lines = [
+    # 直近イベントを先に取って結論ヒントの材料にする
+    try:
+        events = (
+            _core()
+            .list_namespaced_event(
+                namespace=ns,
+                field_selector=f"involvedObject.name={name},involvedObject.namespace={ns}",
+            )
+            .items
+        )
+    except ApiException:
+        events = []
+
+    statuses = list(pod.status.container_statuses or [])
+    total_restarts = sum((cs.restart_count or 0) for cs in statuses)
+    waiting_reasons = [
+        cs.state.waiting.reason for cs in statuses if cs.state.waiting and cs.state.waiting.reason
+    ]
+    terminated_reasons = [
+        cs.state.terminated.reason
+        for cs in statuses
+        if cs.state.terminated and cs.state.terminated.reason
+    ]
+    has_oomkill = (
+        any(
+            (ev.reason or "") in {"OOMKilling", "Killing"} and "OOM" in (ev.message or "")
+            for ev in events
+        )
+        or "OOMKilled" in terminated_reasons
+    )
+
+    # ## 結論ヒント (LLM が冒頭で仮説を立てやすくする 3〜5 行サマリ)
+    hint_lines: list[str] = ["## 結論ヒント", ""]
+    hint_lines.append(f"- 総再起動回数: {total_restarts}")
+    if waiting_reasons:
+        hint_lines.append(f"- waiting reason: {', '.join(set(waiting_reasons))}")
+    if terminated_reasons:
+        hint_lines.append(f"- terminated reason: {', '.join(set(terminated_reasons))}")
+    if has_oomkill:
+        hint_lines.append("- ⚠ OOMKilled の痕跡あり (memory limit / リーク調査推奨)")
+    if not waiting_reasons and not terminated_reasons and total_restarts == 0:
+        hint_lines.append("- 異常状態の痕跡なし (Running を維持)")
+
+    lines: list[str] = [
+        *hint_lines,
+        "",
         f"Pod: {pod.metadata.name} (NS: {ns})",
         f"Node: {pod.spec.node_name or '(未スケジュール)'}",
         f"Status: {pod.status.phase}",
@@ -175,7 +220,7 @@ def k8s_describe_pod(name: str) -> str:
 
     lines.append("")
     lines.append("## Container Statuses")
-    for cs in pod.status.container_statuses or []:
+    for cs in statuses:
         state = "running" if cs.state.running else ("waiting" if cs.state.waiting else "terminated")
         reason = ""
         if cs.state.waiting and cs.state.waiting.reason:
@@ -188,17 +233,6 @@ def k8s_describe_pod(name: str) -> str:
 
     lines.append("")
     lines.append("## Recent Events (pod)")
-    try:
-        events = (
-            _core()
-            .list_namespaced_event(
-                namespace=ns,
-                field_selector=f"involvedObject.name={name},involvedObject.namespace={ns}",
-            )
-            .items
-        )
-    except ApiException:
-        events = []
     for ev in events[-10:]:
         lines.append(f"- [{ev.type}] {ev.reason}: {ev.message} (count={ev.count})")
     if not events:
@@ -244,7 +278,12 @@ def k8s_pod_logs(
         return f"K8s API エラー: {e.status} {e.reason}"
     if not logs:
         return f"Pod `{name}` (container={container}) のログはありません (tail={tail})."
-    return _truncate(logs, max_chars=8000, suffix="\n... (truncated)")
+    total_lines = logs.count("\n") + (0 if logs.endswith("\n") else 1)
+    truncated = _truncate(logs, max_chars=8000, suffix="\n... (truncated)")
+    if truncated is logs or len(truncated) == len(logs):
+        return truncated
+    # 切詰め発生時はサマリ行を末尾に追加
+    return f"{truncated}\n(切詰め: 全 {total_lines} 行のうち末尾を表示)"
 
 
 def k8s_list_events(since_seconds: int = 900, kind: str | None = None) -> str:
@@ -279,7 +318,19 @@ def k8s_list_events(since_seconds: int = 900, kind: str | None = None) -> str:
 
     if not events:
         return f"NS `{ns}` の直近 {since_seconds}s にイベントはありません."
+
+    # reason の頻度 top 5 を冒頭に集計表示 (LLM が原因傾向を一目で掴むため)
+    from collections import Counter
+
+    reason_counter: Counter[str] = Counter(ev.reason or "(no-reason)" for ev in events)
+    top_reasons = reason_counter.most_common(5)
+
     lines = [f"Namespace `{ns}` 直近 {since_seconds}s のイベント ({len(events)} 件):", ""]
+    lines.append("## reason 頻度 top 5")
+    for reason, count in top_reasons:
+        lines.append(f"- {reason}: {count}")
+    lines.append("")
+    lines.append("## 直近 50 件 (新しい順)")
     for ev in events[:50]:
         ts = ev.last_timestamp or ev.event_time or ev.metadata.creation_timestamp
         obj = f"{ev.involved_object.kind}/{ev.involved_object.name}" if ev.involved_object else "?"

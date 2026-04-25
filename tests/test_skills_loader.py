@@ -63,14 +63,10 @@ def test_cost_aware_query_always_injected(retriever: SkillRetriever) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase B-4 で改善するための起点テスト (現状失敗 → 同義語拡張で通す)
+# 同義語拡張の回帰テスト (Phase B-4 で導入)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="Phase B-4 で通す予定. trigger に Evicted が無いため現状ヒットしない.",
-    strict=True,
-)
 def test_evicted_query_picks_oom_kill(retriever: SkillRetriever) -> None:
     """Pod が Evicted されたケースも oom-kill / capacity 系へ向ける."""
     picks = retriever.pick("Pod が Evicted されている", mode="engineer")
@@ -78,12 +74,15 @@ def test_evicted_query_picks_oom_kill(retriever: SkillRetriever) -> None:
     assert "oom-kill" in names
 
 
-@pytest.mark.xfail(
-    reason="Phase B-4 で通す予定. error-rate-spike の trigger に「応答時間」「劣化」等が無い.",
-    strict=True,
-)
 def test_japanese_synonym_picks_latency_regression(retriever: SkillRetriever) -> None:
     """「応答時間が劣化している」でも latency-regression にヒットすること."""
     picks = retriever.pick("checkout の応答時間が劣化している", mode="engineer")
     names = {s.name for s in picks}
     assert "latency-regression" in names
+
+
+def test_zenkaku_eisuu_normalization(retriever: SkillRetriever) -> None:
+    """全角英数字 (Ｅｒｒｏｒ) でも error-rate-spike にヒットすること (NFKC 正規化)."""
+    picks = retriever.pick("Ｅｒｒｏｒ が増えています", mode="engineer")
+    names = {s.name for s in picks}
+    assert "error-rate-spike" in names
