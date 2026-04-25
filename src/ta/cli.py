@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 
 from ta.agent.core import get_agent
@@ -33,13 +34,17 @@ def main(argv: list[str] | None = None) -> int:
     mode = args.mode or get_settings().default_mode
     agent = get_agent()
 
-    conv_id = None
+    return asyncio.run(_main_async(agent, args, mode))
+
+
+async def _main_async(agent, args, mode) -> int:  # type: ignore[no-untyped-def]
+    conv_id: str | None = None
     if args.new_conversation:
-        conv_id = agent.create_conversation(metadata={"source": "cli"})
+        conv_id = await agent.create_conversation(metadata={"source": "cli"})
         print(f"(new conversation: {conv_id})", file=sys.stderr)
 
     if args.no_stream:
-        result = agent.run(args.question, mode=mode, conversation_id=conv_id)
+        result = await agent.run(args.question, mode=mode, conversation_id=conv_id)
         print(result.text)
         if result.tool_calls:
             print("\n--- tool calls ---", file=sys.stderr)
@@ -47,8 +52,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  [{tc['name']}] {tc['arguments']}", file=sys.stderr)
         return 0
 
-    # streaming
-    for event in agent.run_stream(args.question, mode=mode, conversation_id=conv_id):
+    async for event in agent.run_stream(args.question, mode=mode, conversation_id=conv_id):
         t = event["type"]
         if t == "delta":
             sys.stdout.write(event["text"])
@@ -61,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
             sys.stderr.write(f"[tool_result] {event['name']} -> {preview}...\n")
             sys.stderr.flush()
         elif t == "done":
-            print()  # newline after final
+            print()
     return 0
 
 

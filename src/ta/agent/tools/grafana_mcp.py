@@ -1,15 +1,12 @@
-"""Grafana MCP サーバを Responses API のネイティブ MCP ツールとして登録する.
+"""Grafana MCP サーバを Agents SDK の HostedMCPTool として登録する.
 
-Responses API の tools パラメータに以下の形で渡す:
-
-    {"type": "mcp", "server_url": ..., "allowed_tools": [...]}
-
-これにより MCP サーバ側のツールを LLM が自動呼出できる. 自前で MCP クライアントは書かない.
+OCI Enterprise AI の Responses API ネイティブ MCP (`tools:[{type:"mcp"}]`) に
+そのままマッピングされる. 自前で MCP クライアントは書かない.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from agents import HostedMCPTool
 
 from ta.config import get_settings
 
@@ -37,13 +34,15 @@ GRAFANA_ALLOWED_TOOLS: list[str] = [
 ]
 
 
-def grafana_mcp_tool_spec() -> dict[str, Any]:
-    """Responses API の tools パラメータに渡せる 1 エントリを返す."""
+def make_grafana_mcp_tool() -> HostedMCPTool:
+    """Agents SDK の Agent.tools にそのまま渡せる HostedMCPTool を返す."""
     s = get_settings()
-    return {
-        "type": "mcp",
-        "server_label": "grafana",
-        "server_url": s.mcp_grafana_url,
-        "allowed_tools": GRAFANA_ALLOWED_TOOLS,
-        "require_approval": "never",
-    }
+    return HostedMCPTool(
+        tool_config={
+            "type": "mcp",
+            "server_label": "grafana",
+            "server_url": s.mcp_grafana_url,
+            "allowed_tools": GRAFANA_ALLOWED_TOOLS,
+            "require_approval": "never",
+        }
+    )
