@@ -13,15 +13,20 @@ P5b の 10 周ループで毎周呼ぶ想定. 実行すると:
 
 使い方:
   python scripts/run_experiment.py --label iter-01
+
+Phase C-4: tenacity 指数バックオフ再試行 + asyncio.Semaphore で同時実行数制限 +
+1 ケース失敗で続行しつつ最後に失敗一覧を stderr 出力.
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import sys
 
 from langfuse import Langfuse
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ta.agent.core import get_agent
 from ta.telemetry.langfuse_setup import init_langfuse
@@ -29,48 +34,42 @@ from ta.telemetry.langfuse_setup import init_langfuse
 DATASET_NAME = "telemetry-analyst-golden"
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--label", required=True, help="周回ラベル (例: iter-01)")
-    parser.add_argument(
-        "--description", default="", help="Run description (iterations.md への記録補助)"
+@retry(
+    reraise=True,
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=2, min=4, max=30),
+)
+async def _run_with_retry(agent, question: str, mode: str, item_id: str, label: str):  # type: ignore[no-untyped-def]
+    return await agent.run(
+        question,
+        mode=mode,
+        metadata={
+            "kind": "agent-main-response",
+            "dataset_item_id": item_id,
+            "run_label": label,
+        },
     )
-    parser.add_argument("--limit", type=int, default=0, help="処理する item 数の上限 (0=全件)")
-    args = parser.parse_args()
 
-    init_langfuse()
-    lf = Langfuse(
-        host=os.environ["LANGFUSE_HOST"],
-        public_key=os.environ["LANGFUSE_PUBLIC_KEY"],
-        secret_key=os.environ["LANGFUSE_SECRET_KEY"],
-    )
-    dataset = lf.get_dataset(name=DATASET_NAME)
-    items = list(dataset.items)
-    if args.limit:
-        items = items[: args.limit]
-    print(f"Running {len(items)} items as run '{args.label}'...")
 
-    agent = get_agent()
-    for i, item in enumerate(items, 1):
+async def _run_one(  # type: ignore[no-untyped-def]
+    sem: asyncio.Semaphore,
+    agent,
+    item,
+    label: str,
+    description: str,
+    failed: list[tuple[str, str]],
+) -> None:
+    async with sem:
         question = item.input.get("question") if isinstance(item.input, dict) else str(item.input)
         mode = (item.input.get("mode") if isinstance(item.input, dict) else None) or "engineer"
-        print(f"[{i}/{len(items)}] {item.id} ({mode}) — {question[:60]}")
-        # Langfuse Dataset Item に紐付けた run を作成
+        print(f"[{item.id}] ({mode}) {question[:60]}")
         with item.run(
-            run_name=args.label,
-            run_description=args.description or None,
+            run_name=label,
+            run_description=description or None,
             run_metadata={"project": "telemetry-analyst"},
         ) as root_span:
             try:
-                result = agent.run(
-                    question,
-                    mode=mode,  # type: ignore[arg-type]
-                    metadata={
-                        "kind": "agent-main-response",
-                        "dataset_item_id": item.id,
-                        "run_label": args.label,
-                    },
-                )
+                result = await _run_with_retry(agent, question, mode, item.id, label)
                 root_span.update(
                     input=question,
                     output=result.text,
@@ -84,12 +83,58 @@ def main() -> int:
                     },
                 )
             except Exception as e:
-                print(f"  ERROR: {e}", file=sys.stderr)
-                root_span.update(output=f"ERROR: {e}", metadata={"kind": "agent-error"})
+                msg = f"{type(e).__name__}: {e}"
+                print(f"  ERROR ({item.id}): {msg}", file=sys.stderr)
+                failed.append((item.id, msg))
+                root_span.update(output=f"ERROR: {msg}", metadata={"kind": "agent-error"})
+
+
+async def amain() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--label", required=True, help="周回ラベル (例: iter-01)")
+    parser.add_argument(
+        "--description", default="", help="Run description (iterations.md への記録補助)"
+    )
+    parser.add_argument("--limit", type=int, default=0, help="処理する item 数の上限 (0=全件)")
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="同時実行数 (default 1. OCI レート制限を踏まないため小さめ推奨)",
+    )
+    args = parser.parse_args()
+
+    init_langfuse()
+    lf = Langfuse(
+        host=os.environ["LANGFUSE_HOST"],
+        public_key=os.environ["LANGFUSE_PUBLIC_KEY"],
+        secret_key=os.environ["LANGFUSE_SECRET_KEY"],
+    )
+    dataset = lf.get_dataset(name=DATASET_NAME)
+    items = list(dataset.items)
+    if args.limit:
+        items = items[: args.limit]
+    print(f"Running {len(items)} items as run '{args.label}' (concurrency={args.concurrency})...")
+
+    agent = get_agent()
+    sem = asyncio.Semaphore(args.concurrency)
+    failed: list[tuple[str, str]] = []
+    await asyncio.gather(
+        *(_run_one(sem, agent, item, args.label, args.description, failed) for item in items)
+    )
 
     lf.flush()
     print(f"\nDone. View in Langfuse: {os.environ['LANGFUSE_HOST']}/datasets/{DATASET_NAME}")
+    if failed:
+        print(f"\n{len(failed)} 件失敗:", file=sys.stderr)
+        for item_id, msg in failed:
+            print(f"  - {item_id}: {msg}", file=sys.stderr)
+        return 1
     return 0
+
+
+def main() -> int:
+    return asyncio.run(amain())
 
 
 if __name__ == "__main__":

@@ -69,8 +69,16 @@ class SkillRetriever:
                 )
             )
 
-    def pick(self, query: str, mode: Mode, k: int = 3) -> list[Skill]:
-        """常時注入 (triggers=[]) は mode に合えば必ず選び、残りはスコア上位から k 本."""
+    def pick(self, query: str, mode: Mode, k: int = 3, threshold: int | None = None) -> list[Skill]:
+        """常時注入 (triggers=[]) は mode に合えば必ず選び、残りはスコア >= threshold で k 本."""
+        # threshold 未指定なら settings から取得 (テストで上書き可能なよう引数化)
+        if threshold is None:
+            try:
+                from ta.config import get_settings  # 遅延 import (循環回避)
+
+                threshold = get_settings().skill_retriever_threshold
+            except Exception:
+                threshold = 1
         always: list[Skill] = []
         scored: list[tuple[int, Skill]] = []
         for s in self._skills:
@@ -79,7 +87,7 @@ class SkillRetriever:
                 continue
             if not s.triggers:
                 always.append(s)
-            elif score > 0:
+            elif score >= threshold:
                 scored.append((score, s))
 
         scored.sort(key=lambda x: x[0], reverse=True)

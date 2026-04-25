@@ -39,6 +39,10 @@ _m_response_latency: metrics.Histogram | None = None
 _m_tool_invocations: metrics.Counter | None = None
 _m_llm_tokens: metrics.Counter | None = None
 _m_active_sessions: metrics.UpDownCounter | None = None
+# Phase C-2 で追加
+_m_react_turns: metrics.Histogram | None = None
+_m_prompt_chars: metrics.Histogram | None = None
+_m_skill_hits: metrics.Counter | None = None
 
 
 def init_otel(app: FastAPI | None = None) -> None:
@@ -88,6 +92,20 @@ def init_otel(app: FastAPI | None = None) -> None:
         name="ta_agent_active_sessions",
         description="Active Chainlit sessions",
     )
+    _m_react_turns = _meter.create_histogram(
+        name="ta_agent_react_turns",
+        description="ReAct loop turns per agent run (=tool_call_item の数)",
+        unit="1",
+    )
+    _m_prompt_chars = _meter.create_histogram(
+        name="ta_agent_prompt_chars",
+        description="Length of instructions (prompt) per run",
+        unit="char",
+    )
+    _m_skill_hits = _meter.create_counter(
+        name="ta_skill_hit_total",
+        description="Skill picks per agent run, by skill name and mode",
+    )
 
     # 自動インストゥルメント
     if app is not None:
@@ -125,6 +143,21 @@ def record_llm_tokens(kind: str, count: int, model: str) -> None:
 def incr_active_sessions(delta: int = 1) -> None:
     if _m_active_sessions is not None:
         _m_active_sessions.add(delta)
+
+
+def record_react_turns(turns: int, mode: str) -> None:
+    if _m_react_turns is not None:
+        _m_react_turns.record(turns, attributes={"mode": mode})
+
+
+def record_prompt_chars(chars: int, mode: str) -> None:
+    if _m_prompt_chars is not None:
+        _m_prompt_chars.record(chars, attributes={"mode": mode})
+
+
+def record_skill_hit(skill_name: str, mode: str) -> None:
+    if _m_skill_hits is not None:
+        _m_skill_hits.add(1, attributes={"skill": skill_name, "mode": mode})
 
 
 def get_tracer(name: str = "ta.agent") -> trace.Tracer:
