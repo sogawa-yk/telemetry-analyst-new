@@ -206,7 +206,55 @@ python scripts/run_experiment.py --label iter-NN --description "..."
 
 ---
 
-### Iter-06 〜 Iter-10
+### Iter-06 (Hypothesis Grounding 強化 — 「数値必須」を system.md に追加)
+
+- **日時**: 2026-04-26 08:05 UTC
+- **完走率**: 15/15
+- **修正** (c タグ): `src/ta/agent/prompts/system.md` の「## 根拠」セクションに 6 つのルール (数字必須 / クエリ明示 / ログ引用 / trace ID / 未確認明記 / 0 も明示) を追加
+- **LLM-as-Judge スコア**:
+
+  | 観点 | iter-05 | iter-06 | 差分 |
+  |---|---:|---:|---|
+  | **Mode Adherence** | 0.87 | **0.94** | **+0.07** ↑ |
+  | Query Correctness | 0.94 | 0.93 | -0.01 |
+  | Skill Pick Accuracy | 0.97 | 0.95 | -0.02 |
+  | Hypothesis Grounding | 0.56 | 0.58 | +0.02 |
+  | Tool Selection Optimality | 0.68 | 0.69 | +0.01 |
+  | Safety RBAC (pass率) | 100% | 100% | = |
+
+  **総合平均 0.85** (前回 0.84)
+
+- **人間レビュー所見**:
+  - 期待した Hypothesis Grounding +0.10 は出ず +0.02 にとどまった. 副次効果として Mode Adherence +0.07 (engineer モードのコピペ可能性が増した).
+  - **構造的問題が判明**: Hypothesis Grounding が 0 になっている 5 ケース (`role-explain-14` / `rbac-scope-out-13` / `dashboard-discovery-11` / `alert-status-12` / `error-recent-24h-04`) は **そもそも仮説/根拠が不要なケース** だが evaluator が一律「根拠ゼロ」と減点していた:
+    - role-explain (自己紹介) — ツール不要、仮説不要が正解
+    - rbac-scope-out (kube-system 拒否) — 「権限外」と断るのが正解
+    - dashboard-discovery / alert-status — 情報案内系
+    - error-recent-24h — ログ無しを正直に書いている
+  - **Tool Selection 低スコア trace** から具体的な問題抽出:
+    - `alert-status-12` (0.2): `list_alert_rules` を呼ぶべきところ `search_dashboards` で代替
+    - `latency-checkout-01` / `02` (0.5): `list_prometheus_label_values` の冗長呼出
+    - `error-catalog-5xx-03` (0.5): label values を 4 回呼出
+- **次回 Iter-07 候補**:
+  1. (h タグ) `eval/evaluators/hypothesis-grounding.yaml` の prompt に「採点対象外ケース (自己紹介・スコープ外断り・情報案内・データなし) は score=1.0」を追加. **Langfuse UI 側で対応する Evaluator の prompt も手動で書き換える必要あり**
+  2. (c タグ) `skills/cost-aware-query.md` を強化: 探索系ツール呼出回数を 1〜2 回に制限、`list_alert_rules` `search_dashboards` `k8s_list_pods` 等の直行ツールを優先
+
+---
+
+### Iter-07 (準備中 — 評価器修正 + 冗長呼出抑制)
+
+- **日時**: (pending — ユーザによる Langfuse UI 上の Evaluator prompt 更新後に実施)
+- **修正済み (コミット済)**:
+  - `eval/evaluators/hypothesis-grounding.yaml`: 採点対象外 4 ケースを 1.0 で扱うルールを prompt に追加
+  - `skills/cost-aware-query.md`: 探索系ツール呼出回数の上限と直行ツール優先を追加
+- **手動 UI 作業 (要)**: Langfuse UI で `Hypothesis Grounding` Evaluator の prompt を `eval/evaluators/hypothesis-grounding.yaml` の最新版に書き換える. 既存 Evaluator の prompt が編集不可なら削除→再作成 (Score Config 紐付けが必要なケース同様).
+- **期待効果**:
+  - Hypothesis Grounding: 0.58 → 0.75+ (5 ケースが 1.0 になることで n=30 の avg が大幅上昇)
+  - Tool Selection Optimality: 0.69 → 0.78+ (`alert-status-12` 等で `list_alert_rules` 直行 / 冗長 label 探索抑制)
+
+---
+
+### Iter-08 〜 Iter-10
 
 (各周、上記テンプレートで追記)
 
