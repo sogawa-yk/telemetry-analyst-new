@@ -81,6 +81,29 @@ Langfuse がカスタムヘッダをサポートしない場合、`OpenAI-Projec
 
 `eval/evaluators/*.yaml` の 6 種を Langfuse の **Custom Evaluator** として登録する。
 
+### Variable mapping の方針
+
+Langfuse v3 の Evaluator UI では **Object Field の選択肢が `Input` / `Output` / `Metadata` の 3 種のみ** で、ネストされたフィールドや Dataset Item の `expected_output` を直接参照できない。
+
+そのため `scripts/run_experiment.py` 側で **Evaluator が必要とする全変数を `metadata` 直下にフラットに書き込んで**ある。Langfuse UI では:
+
+- `{{input}}` / `{{output}}` → Object Field=`Input` / `Output` をそのまま選択
+- それ以外 (`expected_tools`, `actual_tools`, `tool_arguments`, `selected_skills`, `mode`) → Object Field=`Metadata` を選択し、JSONPath/Field name に **その変数名そのまま** を入れる (例: `expected_tools`)
+
+`run_experiment.py` がトレースに書き込む metadata は次の通り:
+
+```json
+{
+  "kind": "agent-main-response",
+  "mode": "engineer",
+  "expected_tools": ["query_prometheus", "find_slow_requests"],
+  "actual_tools": ["k8s_list_deployments", "query_prometheus"],
+  "tool_arguments": ["{}", "{\"datasourceUid\":\"prometheus\"...}"],
+  "selected_skills": ["latency-regression", "cost-aware-query", "explain-engineer"],
+  "tool_calls": [{"name": "...", "arguments": "..."}]
+}
+```
+
 ### 共通設定 (全 6 種)
 
 | フィールド | 値 |
@@ -92,74 +115,86 @@ Langfuse がカスタムヘッダをサポートしない場合、`OpenAI-Projec
 | Trigger Target | `Observations` (root の generation ではなく individual observation) |
 | Trigger Filter | `metadata.kind = "agent-main-response"` |
 
+下表で「Object Field=Metadata」と書いた行は、JSONPath / Field name 欄に **変数名そのまま** (例: `expected_tools`) を入力する。
+
 ### 2-1. Hypothesis Grounding
 
 - **Name**: `Hypothesis Grounding`
 - **Score Type**: `Numeric` (0.0–1.0)
-- **Variables**: `input`, `output`
 - **Prompt**: `eval/evaluators/hypothesis-grounding.yaml` の `prompt` 全文をコピペ
 - **Variable mapping**:
-  - `{{input}}` ← Observation の `input` (ユーザー質問)
-  - `{{output}}` ← Observation の `output` (エージェント最終回答)
+
+| 変数 | Object | Object Field | JSONPath / Field name |
+|---|---|---|---|
+| `input` | Observation | Input | (空欄) |
+| `output` | Observation | Output | (空欄) |
 
 ### 2-2. Tool Selection Optimality
 
 - **Name**: `Tool Selection Optimality`
 - **Score Type**: `Numeric`
-- **Variables**: `input`, `output`, `expected_tools`, `actual_tools`
 - **Prompt**: `eval/evaluators/tool-selection.yaml` の `prompt` 全文
 - **Variable mapping**:
-  - `{{input}}` ← Observation `input`
-  - `{{output}}` ← Observation `output`
-  - `{{expected_tools}}` ← Dataset Item の `expected_output.expected_tools` (例: `["query_prometheus", "find_slow_requests"]`)
-  - `{{actual_tools}}` ← Observation の `metadata.tool_calls[*].name` (`run_experiment.py` が記録)
+
+| 変数 | Object | Object Field | JSONPath / Field name |
+|---|---|---|---|
+| `input` | Observation | Input | (空欄) |
+| `output` | Observation | Output | (空欄) |
+| `expected_tools` | Observation | Metadata | `expected_tools` |
+| `actual_tools` | Observation | Metadata | `actual_tools` |
 
 ### 2-3. Query Correctness (PromQL/LogQL)
 
 - **Name**: `Query Correctness (PromQL/LogQL)`
 - **Score Type**: `Numeric`
-- **Variables**: `input`, `actual_tools`, `tool_arguments`
 - **Prompt**: `eval/evaluators/query-correctness.yaml` の `prompt` 全文
 - **Variable mapping**:
-  - `{{input}}` ← Observation `input`
-  - `{{actual_tools}}` ← `metadata.tool_calls[*].name`
-  - `{{tool_arguments}}` ← `metadata.tool_calls[*].arguments` (JSON 文字列。LLM 側でパース可)
 
-### 2-4. Hypothesis / Mode Adherence
+| 変数 | Object | Object Field | JSONPath / Field name |
+|---|---|---|---|
+| `input` | Observation | Input | (空欄) |
+| `actual_tools` | Observation | Metadata | `actual_tools` |
+| `tool_arguments` | Observation | Metadata | `tool_arguments` |
+
+### 2-4. Mode Adherence (beginner/engineer)
 
 - **Name**: `Mode Adherence (beginner/engineer)`
 - **Score Type**: `Numeric`
-- **Variables**: `input`, `output`, `mode`
 - **Prompt**: `eval/evaluators/mode-adherence.yaml` の `prompt` 全文
 - **Variable mapping**:
-  - `{{input}}` ← Observation `input`
-  - `{{output}}` ← Observation `output`
-  - `{{mode}}` ← Observation の `metadata.mode` (`run_experiment.py` が `beginner` / `engineer` を設定)
+
+| 変数 | Object | Object Field | JSONPath / Field name |
+|---|---|---|---|
+| `input` | Observation | Input | (空欄) |
+| `output` | Observation | Output | (空欄) |
+| `mode` | Observation | Metadata | `mode` |
 
 ### 2-5. Skill Pick Accuracy
 
 - **Name**: `Skill Pick Accuracy`
 - **Score Type**: `Numeric`
-- **Variables**: `input`, `selected_skills`, `mode`
 - **Prompt**: `eval/evaluators/skill-pick-accuracy.yaml` の `prompt` 全文
 - **Variable mapping**:
-  - `{{input}}` ← Observation `input`
-  - `{{selected_skills}}` ← OpenInference span 属性 `agent.skills` (Phase C-2 で `record_skill_hit` が出力)
-  - `{{mode}}` ← `metadata.mode`
 
-> 注: `selected_skills` は OpenInference の span 属性として記録される。Langfuse の Variable mapping で span attributes を引けない場合は、`run_experiment.py` 側で `result.metadata.skills_picked` をトレース metadata に書く改修が必要 (Iter のどこかで対応)。
+| 変数 | Object | Object Field | JSONPath / Field name |
+|---|---|---|---|
+| `input` | Observation | Input | (空欄) |
+| `selected_skills` | Observation | Metadata | `selected_skills` |
+| `mode` | Observation | Metadata | `mode` |
 
 ### 2-6. Safety RBAC Boundary
 
 - **Name**: `Safety: RBAC Scope Boundary`
 - **Score Type**: `Categorical (pass / fail)`
-- **Variables**: `input`, `output`, `actual_tools`
 - **Prompt**: `eval/evaluators/safety-rbac-boundary.yaml` の `prompt` 全文
-- **Variable mapping**:
-  - `{{input}}` ← Observation `input`
-  - `{{output}}` ← Observation `output`
-  - `{{actual_tools}}` ← `metadata.tool_calls[*].name`
 - **Output schema**: JSON `{"value": "pass"|"fail", "rationale": string}`
+- **Variable mapping**:
+
+| 変数 | Object | Object Field | JSONPath / Field name |
+|---|---|---|---|
+| `input` | Observation | Input | (空欄) |
+| `output` | Observation | Output | (空欄) |
+| `actual_tools` | Observation | Metadata | `actual_tools` |
 
 ---
 
@@ -208,7 +243,7 @@ kubectl exec -n telemetry-analyst $POD -- bash -c '
 | `Test Connection` で 401 (Incorrect API key) | OCI 鍵を OpenAI 公式エンドポイントに送ろうとしている。Base URL が `OPENAI_BASE_URL` の値になっているか確認 |
 | `Test Connection` で `OpenAI-Project header missing` 系のエラー | カスタムヘッダ欄が効いていない → 1-B (LiteLLM) にフォールバック |
 | Run しても evaluator が走らない | Trigger の `Filter` が外れている / `metadata.kind` が一致しない。`run_experiment.py` の `metadata={"kind": "agent-main-response", ...}` と評価器側の filter を見比べる |
-| `selected_skills` が常に空 | `metadata` に `skills_picked` を載せる必要がある。`run_experiment.py` の `root_span.update(metadata=...)` に `picked_skills(question, mode)` の結果を追加する (Iter のどこかで対応) |
+| `expected_tools` / `actual_tools` 等が空 | 古い `run_experiment.py` で生成した trace は metadata がフラット化されていない。`scripts/run_experiment.py` を最新版にして再実行 (`iter-NN` を新しい label で叩き直す) |
 | `Missing required parameter: 'input[N].output'` (judge 側) | OCI 互換性の差分。**判事モデル**は短い prompt で済むので 1-A 直接接続でほぼ問題ないはず。Run-time agent 側の同問題は `src/ta/agent/_oci_compat.py` で解決済 |
 | Categorical evaluator (RBAC) のスコアが Numeric になる | `Score Type` を `Categorical` に設定し、prompt が `{"value": ...}` を返すよう指示しているか確認 |
 
