@@ -73,40 +73,29 @@ def main() -> int:
 
     lf.flush()
 
-    # 3) Evaluator / LLM Connection の UI 手順を案内
+    # 3) Evaluator / LLM Connection の UI 手順は別ドキュメントを参照
     print()
     print("=" * 70)
     print("  Manual UI Setup Required (Evaluators + LLM Connection)")
     print("=" * 70)
     print()
-    print(f"Open: {os.environ['LANGFUSE_HOST']} → Project Settings")
+    print("詳細手順は次のドキュメントを参照:")
+    print("  docs/runbook/langfuse_evaluator_setup.md")
     print()
-    print("--- LLM Connection (OCI Enterprise AI を判事モデルとして登録) ---")
-    print("  Settings → LLM Connections → Add new LLM API key")
-    print("    Provider:     OpenAI")
-    print("    Name:         oci-enterprise-ai")
-    print("    API Key:      <Secret oci-genai-key の api_key 値>")
-    print("    Advanced Settings → Base URL:")
-    print("      https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com/openai/v1")
-    print("    カスタムヘッダ (対応していれば):")
+    print(f"Langfuse UI: {os.environ['LANGFUSE_HOST']}")
+    print()
     print(
-        "      OpenAI-Project: ocid1.generativeaiproject.oc1.ap-osaka-1.amaaaaaassl65iqak67q6dr5zu6jqoimgf54sylota5devqglzkkoenxznxa"
+        "--- 登録対象 Evaluator ({} 種) ---".format(
+            len(list((REPO / "eval" / "evaluators").glob("*.yaml")))
+        )
     )
-    print("  ※ カスタムヘッダが未対応なら deploy/k8s/deployment-litellm-proxy.yaml を")
-    print("     有効化し、LiteLLM 経由でアクセスする (別途手順)")
-    print()
-    print("--- Evaluators (以下 6 種を登録) ---")
     for y in sorted((REPO / "eval" / "evaluators").glob("*.yaml")):
         spec = yaml.safe_load(y.read_text(encoding="utf-8"))
         print(f"  [{y.name}] name='{spec['name']}' type={spec['score_type']}")
-        print(f"     target={spec['trigger']['target']} filter={spec['trigger'].get('filter')}")
-    print()
-    print("  登録手順: Settings → Evaluators → + Set up Evaluator → Custom Evaluator")
-    print("  Prompt 本文・variables・score_type は eval/evaluators/ の各 YAML からコピー.")
     print()
     print("--- Dataset Experiment 実行 ---")
-    print("  UI: Datasets → telemetry-analyst-golden → Run Experiment")
-    print("  SDK: scripts/run_experiment.py (次ステップで実装予定)")
+    print(f"  UI:  {os.environ['LANGFUSE_HOST']}/datasets/{DATASET_NAME}")
+    print("  SDK: python scripts/run_experiment.py --label iter-NN --description '...'")
     print()
     return 0
 
