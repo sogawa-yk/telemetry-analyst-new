@@ -22,7 +22,8 @@ mode: any
 ## 進め方
 
 1. **エラー率の推移**
-   - PromQL 例: `sum(rate(http_requests_total{namespace="ec-shop",app="<svc>",code=~"5.."}[5m])) / sum(rate(http_requests_total{namespace="ec-shop",app="<svc>"}[5m]))`
+   - PromQL 例 (ec-shop は `ec_` 接頭辞 + `service=` + `status=`):
+     `sum(rate(ec_http_requests_total{namespace="ec-shop",status=~"5.."}[5m])) / sum(rate(ec_http_requests_total{namespace="ec-shop"}[5m]))`
    - 発生開始時刻を特定 (どの時間帯から上がったか)
 2. **エラーパターンを Loki で抽出**
    - `find_error_pattern_logs` (Sift) で異常に増えているログパターンを自動抽出
