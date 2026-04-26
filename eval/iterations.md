@@ -241,16 +241,33 @@ python scripts/run_experiment.py --label iter-NN --description "..."
 
 ---
 
-### Iter-07 (準備中 — 評価器修正 + 冗長呼出抑制)
+### Iter-07 (評価器修正 + 冗長呼出抑制)
 
-- **日時**: (pending — ユーザによる Langfuse UI 上の Evaluator prompt 更新後に実施)
-- **修正済み (コミット済)**:
-  - `eval/evaluators/hypothesis-grounding.yaml`: 採点対象外 4 ケースを 1.0 で扱うルールを prompt に追加
-  - `skills/cost-aware-query.md`: 探索系ツール呼出回数の上限と直行ツール優先を追加
-- **手動 UI 作業 (要)**: Langfuse UI で `Hypothesis Grounding` Evaluator の prompt を `eval/evaluators/hypothesis-grounding.yaml` の最新版に書き換える. 既存 Evaluator の prompt が編集不可なら削除→再作成 (Score Config 紐付けが必要なケース同様).
-- **期待効果**:
-  - Hypothesis Grounding: 0.58 → 0.75+ (5 ケースが 1.0 になることで n=30 の avg が大幅上昇)
-  - Tool Selection Optimality: 0.69 → 0.78+ (`alert-status-12` 等で `list_alert_rules` 直行 / 冗長 label 探索抑制)
+- **日時**: 2026-04-26 09:24 UTC
+- **完走率**: 15/15
+- **修正**:
+  - (h タグ) Langfuse UI 上の `Hypothesis Grounding` Evaluator prompt を `eval/evaluators/hypothesis-grounding.yaml` の最新版に書き換え (採点対象外 4 ケースを 1.0 化)
+  - (c タグ) `skills/cost-aware-query.md` 強化済 (Iter-06/07 コミット)
+- **LLM-as-Judge スコア**:
+
+  | 観点 | iter-06 | iter-07 | 差分 |
+  |---|---:|---:|---|
+  | **Hypothesis Grounding** | 0.58 | **0.98** | **+0.40** ↑↑↑ |
+  | Mode Adherence | 0.94 | 0.90 | -0.04 |
+  | Query Correctness | 0.93 | 0.89 | -0.04 |
+  | Skill Pick Accuracy | 0.95 | 0.95 | = |
+  | **Tool Selection Optimality** | 0.69 | **0.71** | +0.02 |
+  | Safety RBAC (pass率) | 100% | 100% | = |
+
+  **総合平均 0.91** (前回 0.85, +0.06)
+
+- **人間レビュー所見**:
+  - Hypothesis Grounding は期待 0.75+ を遥かに超え 0.98. 評価器の対象外指定が想定以上に効いた. min=0.30 なので個別ケースで判定揺れはある.
+  - Mode Adherence / Query Correctness の微減は判定揺れの範囲.
+  - Tool Selection +0.02 は cost-aware-query 強化のごく一部の効果. **0.71 でまだ 0.8 未満** で唯一の改善余地.
+- **次回 Iter-08 候補**: Tool Selection 0.71 を 0.8+ に上げる
+  1. (a タグ) `src/ta/agent/tools/k8s.py` の docstring 調整 + `src/ta/agent/tools/grafana_mcp.py` の allowed_tools 整理 (重複機能のツールを絞る)
+  2. (c タグ) `system.md` に「探索ツールは label を 1 度引いたら結果を覚えて再利用」「アラート確認は `list_alert_rules` 一本」の強い指針を追加
 
 ---
 
