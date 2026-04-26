@@ -196,35 +196,45 @@ Langfuse v3 の Evaluator UI では **Object Field の選択肢が `Input` / `Ou
 | `output` | Observation | Output | (空欄) |
 | `actual_tools` | Observation | Metadata | `actual_tools` |
 
-> **注**: Categorical Evaluator は **Step 2-pre** (下記) で先に Score Config を作って参照する必要がある. Score Config 未登録だと judge が `pass` を返しても numeric value=0 で記録され、平均スコアが常に 0 になる (Iter-03 で観測).
+> **注**: Categorical Evaluator は **Step 2-pre** (下記) で出力マッピング (`pass=1` / `fail=0`) を Evaluator 自身に設定する必要がある. これを設定しないと `value` フィールドが常に 0 で平均が 0 になる (`stringValue` には `pass` / `fail` 文字列が記録されるので、後者から集計することも可能だが、UI 上の数値表示が崩れる).
 
 ---
 
-## Step 2-pre: Categorical 用 Score Config を登録 (Safety RBAC Boundary 用)
+## Step 2-pre: Categorical Evaluator の出力設定 (Safety RBAC Boundary 用)
 
-Langfuse では Categorical 型のスコアは **Score Config** で値マッピングを事前定義する必要がある。Safety RBAC Boundary 用の `pass-fail` 設定を作成する。
+Langfuse v3 の **Score Config** と **Evaluator の Categorical 出力設定** は別レイヤで、Evaluator は Score Config を参照しなくても、自分の出力設定で category → numeric value のマッピングを持てる. 両者で **同じ categories + 同じ values** に揃えておけば、UI 上の集計と型整合が取れる.
 
-> ⚠️ **重要**: Custom Evaluator の Score Config 紐付けは **作成時にのみ** 行える (Langfuse v3.167.x で確認). 既に Step 2-6 で Categorical Evaluator を作ってしまった場合、後から Score Config を当てる UI は無いため、本 Step を完了してから **Evaluator を削除→再作成**する必要がある.
+### (任意) プロジェクト共通の Score Config を定義
+
+Score Config は他の Evaluator や手動 annotation と共有したい場合のみ作る. 単発で済むなら省略してよい.
 
 1. UI 左メニュー → `Settings` → `Score Configs`
-2. `+ Add Score Config` をクリック
-3. 以下を入力:
+2. `+ Add Score Config`:
    | フィールド | 値 |
    |---|---|
    | Name | `pass-fail` |
    | Data Type | `Categorical` |
    | Categories | `pass` (Value: `1`), `fail` (Value: `0`) |
-   | Description (任意) | `Safety boundary 等の二値判定. pass=1 / fail=0 で平均 1.0 = 全件通過` |
-4. `Save`
+3. `Save`
 
-その後、Step 2-6 の `Safety: RBAC Scope Boundary` Evaluator を **再作成** する:
+### Evaluator 側の Categorical 出力マッピング (こちらは必須)
 
-1. UI 左メニュー → `Evaluators` → `Safety: RBAC Scope Boundary` を `Delete`
-2. `+ Set up evaluator` → `Custom Evaluator` で同じ名前で再作成
-3. Score Type で `Categorical` を選ぶと **Score Config** ドロップダウンが現れるので `pass-fail` を選択
-4. Variables / Prompt / Trigger は Step 2-6 の表どおり
+Step 2-6 の `Safety: RBAC Scope Boundary` Evaluator を編集し、Categorical の出力設定で同じマッピングを入れる. UI バージョンで名前が異なる可能性があるが、`Categorical` Score Type の近くに以下のような項目がある:
 
-> 既に Iter-NN を回してしまっている場合、その Run のスコアは value=0 のまま固定. Score Config を後から関連付けても **過去スコアは再計算されない**ため、修復後に新しい label (例: `iter-04`) で再走させる必要がある.
+- `Categories` / `Score Mapping` / `Output Categories` / `Result mapping`
+
+ここに次の 2 件を登録する:
+
+| Label | Value |
+|---|---|
+| `pass` | `1` |
+| `fail` | `0` |
+
+> Evaluator 単独で完結するためこの設定だけで `value` フィールドが正しく 0/1 になる. Score Config を別途作って同じカテゴリで揃えておけば UI 集計やプロジェクト横断の整合が取れる.
+
+### 既存スコアの扱い
+
+Score Type やマッピングを後から変えても **過去 Run のスコアは再計算されない**. 修復後に新しい label (例: `iter-04`) で再走させて新規スコアを生成する必要がある. 既存 Iter のスコアは `stringValue` フィールド (例: `"pass"` / `"fail"`) は残っているので、集計時に文字列で pass 率を計算することは可能.
 
 ---
 
