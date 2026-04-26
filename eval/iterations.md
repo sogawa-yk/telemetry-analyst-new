@@ -103,7 +103,49 @@ python scripts/run_experiment.py --label iter-NN --description "..."
 
 ---
 
-### Iter-02 〜 Iter-10
+### Iter-02 / 02b (metadata flatten + 動作確認)
+
+- **日時**: 2026-04-26 00:42 UTC (iter-02), 00:45 UTC (iter-02b)
+- **背景**: Langfuse Custom Evaluator の Variable mapping は Object Field=Input/Output/Metadata の 3 択のみで、ネスト/Dataset Item の `expected_output` を引けない. このため `scripts/run_experiment.py` を改修し、metadata 直下に `expected_tools` / `actual_tools` / `tool_arguments` / `selected_skills` / `mode` をフラット化した.
+- **完走率**: 15/15 (両方)
+- **Evaluator**: 当時 6 種中 2 種 (Tool Selection / Hypothesis Grounding) のみ登録済 → iter-02 と iter-02b の両方に対し各 30 件採点. 残り 4 種は iter-03 で発火.
+- **修正**: `scripts/run_experiment.py` の `root_span.update(metadata=...)` に flatten フィールドを追加 / `docs/runbook/langfuse_evaluator_setup.md` の Variable mapping 表を Metadata + JSONPath 単純化に書換.
+
+---
+
+### Iter-03 (Evaluator 6 種登録後の最初の採点)
+
+- **日時**: 2026-04-26 00:58 UTC
+- **完走率**: 15/15
+- **LLM-as-Judge 平均スコア** (各 trace に Trace + Observation で 2 回発火し n=30):
+
+  | 観点 | 平均 | min–max | 評価 |
+  |---|---:|---:|---|
+  | Mode Adherence (beginner/engineer) | **0.92** | 0.20–1.00 | ✅ 良好 |
+  | Skill Pick Accuracy | **0.93** | 0.50–1.00 | ✅ 良好 |
+  | Query Correctness (PromQL/LogQL) | **0.88** | 0.00–1.00 | ✅ 良好 |
+  | Tool Selection Optimality | 0.61 | 0.20–1.00 | ⚠ 改善余地 |
+  | Hypothesis Grounding | **0.39** | 0.00–1.00 | ⚠ 環境起因 |
+  | Safety RBAC Boundary | **0.00** | 全件 0 | 🚨 設定不備 |
+
+- **人間レビュー所見**:
+  - **Safety RBAC Boundary 全件 0 は採点失敗** (LLM 判定は正しく「pass」と書いているが、Categorical 型の Score Config が未登録のため数値化されず value=0 になる). `/api/public/score-configs?limit=20` で `totalItems=0` を確認.
+    - 例: `value=0, comment="エージェントは ec-shop NS に限定...pass と判断できる"`
+    - **修復**: Langfuse UI `Settings → Score Configs` で `pass-fail` (Categorical, pass=1 / fail=0) を作成し、Safety RBAC Boundary Evaluator から参照する設定に変更.
+  - **Hypothesis Grounding 0.39 は環境起因**. judge の comment:
+    - 「Prometheus 未接続のため実測値や数値的根拠は提示できていない」
+    - 「監視基盤のエラーにより全く提示されておらず」
+    - 原因は `mcp-grafana` ConfigMap の `GRAFANA_URL=http://grafana.observability.svc.cluster.local` が現環境で DNS 解決できないこと. エージェント実装の問題ではなく **運用課題**.
+  - その他の観点 (Mode / Skill Pick / Query Correctness) は 0.88〜0.93 と高水準で、Phase B のプロンプト/skill 強化が効いている.
+- **修正**: 本周回内では未実施. 次回 Iter-04 で Score Config 追加 (Safety RBAC) と、Grafana 接続失敗時に「未確認」と明示するプロンプト強化を試す.
+- **次回 Iter-04 候補**:
+  1. Langfuse UI で `pass-fail` Score Config を登録 + Safety RBAC Evaluator で参照 → 採点復旧
+  2. (環境課題) `mcp-grafana` の GRAFANA_URL を実環境で到達可能な値に修正 (運用タスク)
+  3. Tool Selection Optimality の 0.61 改善 — ツール description の文言調整 (a タグ)
+
+---
+
+### Iter-04 〜 Iter-10
 
 (各周、上記テンプレートで追記)
 
