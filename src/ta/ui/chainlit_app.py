@@ -96,7 +96,11 @@ async def on_message(message: cl.Message) -> None:
     answer_msg = cl.Message(content="")
     await answer_msg.send()
 
-    # ツール呼出を可視化する step
+    # 同じ tool 呼出を 2 回表示しないため、call_id ごとに 1 つの Step を保持し、
+    # tool_call で input を立て、tool_result で同じ step を update する.
+    steps: dict[str, cl.Step] = {}
+    fallback_idx = [0]  # call_id が無い event 用の連番
+
     # SSE ストリームを最後まで受け取るため timeout は無効化する (read 側を None)
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0)
@@ -129,7 +133,7 @@ async def on_message(message: cl.Message) -> None:
                         event = json.loads(payload)
                     except json.JSONDecodeError:
                         continue
-                    await _handle_event(event, answer_msg)
+                    await _handle_event(event, answer_msg, steps, fallback_idx)
         except Exception as e:
             await cl.Message(content=f"⚠️ 通信エラー: {e}").send()
             return
@@ -137,7 +141,12 @@ async def on_message(message: cl.Message) -> None:
     await answer_msg.update()
 
 
-async def _handle_event(event: dict[str, Any], answer_msg: cl.Message) -> None:
+async def _handle_event(
+    event: dict[str, Any],
+    answer_msg: cl.Message,
+    steps: dict[str, cl.Step],
+    fallback_idx: list[int],
+) -> None:
     t = event.get("type")
     if t == "delta":
         token = event.get("text", "")
@@ -146,14 +155,27 @@ async def _handle_event(event: dict[str, Any], answer_msg: cl.Message) -> None:
     elif t == "tool_call":
         name = event.get("name", "?")
         args = event.get("arguments", "")
-        async with cl.Step(name=f"tool: {name}", type="tool") as step:
-            step.input = args
+        call_id = event.get("call_id") or f"_fb_{fallback_idx[0]}"
+        if not event.get("call_id"):
+            fallback_idx[0] += 1
+        # cl.Step を手動 send して call_id 単位で保持. tool_result で同 step を更新する.
+        step = cl.Step(name=f"tool: {name}", type="tool")
+        step.input = args
+        await step.send()
+        steps[call_id] = step
     elif t == "tool_result":
         name = event.get("name", "?")
         result = event.get("result", "")
-        # 直前の step に結果を追記
-        async with cl.Step(name=f"tool: {name}", type="tool") as step:
-            step.output = result[:2000]
+        call_id = event.get("call_id") or ""
+        step = steps.get(call_id)
+        if step is None:
+            # call_id が一致する step が無ければ新規作成 (フォールバック)
+            step = cl.Step(name=f"tool: {name}", type="tool")
+            await step.send()
+            if call_id:
+                steps[call_id] = step
+        step.output = result[:2000]
+        await step.update()
     elif t == "done":
-        # 何もしない (delta で逐次ストリームしてきたので answer_msg はすでに完成)
+        # delta で逐次ストリームしてきたので answer_msg はすでに完成
         pass
