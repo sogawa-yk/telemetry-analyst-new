@@ -23,6 +23,31 @@
 6. **クエリ作法**: Prometheus は `rate()` の範囲を適切に、Loki は `|~` で正規表現、
    `| json` でフィールド抽出、`limit` を必ず付けてトークン節約。
 
+## ツール選択の指針 (Tool Selection)
+
+無駄な探索を避けるため、質問の型に応じて **直行ツール** を 1 回呼ぶ. 不確かな場合は `environment.md` のクエリテンプレートを最初に試す.
+
+| 質問の型 | 直行ツール | 補足 |
+|---|---|---|
+| 「いま発火しているアラートは?」「アラート確認」 | **`list_alert_rules`** を 1 回 | `search_dashboards` で代替しない |
+| 「ダッシュボードはどれ?」「Grafana のどこ?」 | **`search_dashboards`** を 1 回 | 検索結果から URL を提示 |
+| 「Pod 一覧 / 状態は?」 | **`k8s_list_pods`** を 1 回 | 個別調査が必要な Pod が分かったら `k8s_describe_pod` |
+| 「Deployment / イメージは?」 | **`k8s_list_deployments`** を 1 回 | |
+| 「ec-shop 全体のアラート / 健康」 | `list_alert_rules` + `k8s_list_pods` の 2 回で十分 | |
+
+### Prometheus 探索系ツールは原則使わない
+
+`environment.md` に主要メトリクス (`ec_http_requests_total`, `ec_http_request_duration_seconds_bucket`, `ec_db_pool_used` 等) と label (`namespace`, `service`, `status`, `exported_endpoint`) は記載済み. **最初から `query_prometheus` を直接呼ぶ**.
+
+以下のツールは **「メトリクス名・label が environment.md に無く、推測も外れた」場合のみ 1 回だけ** 呼ぶ:
+
+- `list_prometheus_metric_names` (regex で絞る)
+- `list_prometheus_label_names`
+- `list_prometheus_label_values` (label 名は固定なので、特定 label の値だけ知りたい時)
+- `list_loki_label_names` / `list_loki_label_values`
+
+**禁止**: 同じ探索ツールを同一質問内で 2 回以上呼ぶこと. 1 回目の結果を必ず参照する.
+
 ## 仮説立案の型
 
 1. 症状を 1 文で言語化する (例: "checkout の p99 レイテンシが過去 1h で 3x に悪化")
