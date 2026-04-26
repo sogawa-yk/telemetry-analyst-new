@@ -196,6 +196,29 @@ Langfuse v3 の Evaluator UI では **Object Field の選択肢が `Input` / `Ou
 | `output` | Observation | Output | (空欄) |
 | `actual_tools` | Observation | Metadata | `actual_tools` |
 
+> **注**: Categorical Evaluator は **Step 2-pre** (下記) で先に Score Config を作って参照する必要がある. Score Config 未登録だと judge が `pass` を返しても numeric value=0 で記録され、平均スコアが常に 0 になる (Iter-03 で観測).
+
+---
+
+## Step 2-pre: Categorical 用 Score Config を登録 (Safety RBAC Boundary 用)
+
+Langfuse では Categorical 型のスコアは **Score Config** で値マッピングを事前定義する必要がある。Safety RBAC Boundary 用の `pass-fail` 設定を作成する。
+
+1. UI 左メニュー → `Settings` → `Score Configs`
+2. `+ Add Score Config` をクリック
+3. 以下を入力:
+   | フィールド | 値 |
+   |---|---|
+   | Name | `pass-fail` |
+   | Data Type | `Categorical` |
+   | Categories | `pass` (Value: `1`), `fail` (Value: `0`) |
+   | Description (任意) | `Safety boundary 等の二値判定. pass=1 / fail=0 で平均 1.0 = 全件通過` |
+4. `Save`
+
+その後、Step 2-6 で登録した `Safety: RBAC Scope Boundary` Evaluator を編集し、**Score Config** 欄で先ほど作った `pass-fail` を選択する。
+
+> 既に Iter-NN を回してしまっている場合、その Run のスコアは value=0 のまま固定. Score Config を後から関連付けても **過去スコアは再計算されない**ため、修復後に新しい label (例: `iter-04`) で再走させる必要がある.
+
 ---
 
 ## Step 3: Dataset Run (Iter-NN) を実行
@@ -246,6 +269,8 @@ kubectl exec -n telemetry-analyst $POD -- bash -c '
 | `expected_tools` / `actual_tools` 等が空 | 古い `run_experiment.py` で生成した trace は metadata がフラット化されていない。`scripts/run_experiment.py` を最新版にして再実行 (`iter-NN` を新しい label で叩き直す) |
 | `Missing required parameter: 'input[N].output'` (judge 側) | OCI 互換性の差分。**判事モデル**は短い prompt で済むので 1-A 直接接続でほぼ問題ないはず。Run-time agent 側の同問題は `src/ta/agent/_oci_compat.py` で解決済 |
 | Categorical evaluator (RBAC) のスコアが Numeric になる | `Score Type` を `Categorical` に設定し、prompt が `{"value": ...}` を返すよう指示しているか確認 |
+| Categorical evaluator のスコアが常に 0 (pass判定でも) | **Step 2-pre** の Score Config が未登録. `pass-fail` を作成し Evaluator から参照させる. 過去 Run のスコアは再計算されないため新 label で再走が必要 |
+| Hypothesis Grounding が常に低スコア (judge の comment に「Prometheus 未接続」等の文言) | Grafana バックエンド (`prometheus-grafana.observability.svc.cluster.local:3000` 等) に MCP-grafana から到達できていない. ConfigMap の `GRAFANA_URL` を再確認し、`mcp-grafana` deployment を rollout restart |
 
 ---
 

@@ -23,7 +23,9 @@ data:
   # mcp-grafana は --transport=streamable-http 起動 (default endpoint path: /mcp)
   MCP_GRAFANA_URL: "https://ta-mcp.sogawa-yk.com/mcp"
   MCP_GRAFANA_ENABLED: "true"
-  GRAFANA_URL: "http://grafana.observability.svc.cluster.local"
+  # Grafana の Service 名は kube-prometheus-stack の prometheus-grafana
+  # (port 3000 を明示しないと別ポートに飛んで timeout する)
+  GRAFANA_URL: "http://prometheus-grafana.observability.svc.cluster.local:3000"
   GRAFANA_EXTERNAL_URL: "https://grafana.sogawa-yk.com"
 
   # 監視対象
