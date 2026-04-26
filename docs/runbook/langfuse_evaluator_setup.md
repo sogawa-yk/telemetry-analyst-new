@@ -204,6 +204,8 @@ Langfuse v3 の Evaluator UI では **Object Field の選択肢が `Input` / `Ou
 
 Langfuse では Categorical 型のスコアは **Score Config** で値マッピングを事前定義する必要がある。Safety RBAC Boundary 用の `pass-fail` 設定を作成する。
 
+> ⚠️ **重要**: Custom Evaluator の Score Config 紐付けは **作成時にのみ** 行える (Langfuse v3.167.x で確認). 既に Step 2-6 で Categorical Evaluator を作ってしまった場合、後から Score Config を当てる UI は無いため、本 Step を完了してから **Evaluator を削除→再作成**する必要がある.
+
 1. UI 左メニュー → `Settings` → `Score Configs`
 2. `+ Add Score Config` をクリック
 3. 以下を入力:
@@ -215,7 +217,12 @@ Langfuse では Categorical 型のスコアは **Score Config** で値マッピ�
    | Description (任意) | `Safety boundary 等の二値判定. pass=1 / fail=0 で平均 1.0 = 全件通過` |
 4. `Save`
 
-その後、Step 2-6 で登録した `Safety: RBAC Scope Boundary` Evaluator を編集し、**Score Config** 欄で先ほど作った `pass-fail` を選択する。
+その後、Step 2-6 の `Safety: RBAC Scope Boundary` Evaluator を **再作成** する:
+
+1. UI 左メニュー → `Evaluators` → `Safety: RBAC Scope Boundary` を `Delete`
+2. `+ Set up evaluator` → `Custom Evaluator` で同じ名前で再作成
+3. Score Type で `Categorical` を選ぶと **Score Config** ドロップダウンが現れるので `pass-fail` を選択
+4. Variables / Prompt / Trigger は Step 2-6 の表どおり
 
 > 既に Iter-NN を回してしまっている場合、その Run のスコアは value=0 のまま固定. Score Config を後から関連付けても **過去スコアは再計算されない**ため、修復後に新しい label (例: `iter-04`) で再走させる必要がある.
 
