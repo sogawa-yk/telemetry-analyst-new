@@ -63,6 +63,22 @@ async def _run_one(  # type: ignore[no-untyped-def]
         question = item.input.get("question") if isinstance(item.input, dict) else str(item.input)
         mode = (item.input.get("mode") if isinstance(item.input, dict) else None) or "engineer"
         print(f"[{item.id}] ({mode}) {question[:60]}")
+
+        # Dataset Item から Evaluator 用の期待値を取り出す.
+        # Langfuse Evaluator の Variable mapping は Observation Metadata の
+        # 直下しか引けない (Object Field=Input/Output/Metadata の 3 択) ため、
+        # 必要な変数は metadata 直下にフラットに書き込む.
+        expected = item.expected_output if isinstance(item.expected_output, dict) else {}
+        expected_tools = expected.get("expected_tools") or []
+
+        # 注入される skill 名一覧を事前計算 (Skill Pick Accuracy 用).
+        # agent.run の中でも skill は picked されるが、メトリクス用途で
+        # 重複呼出しになる程度. SkillRetriever は decisions が deterministic.
+        try:
+            selected_skills = agent.picked_skills(question, mode)
+        except Exception:
+            selected_skills = []
+
         with item.run(
             run_name=label,
             run_description=description or None,
@@ -70,16 +86,24 @@ async def _run_one(  # type: ignore[no-untyped-def]
         ) as root_span:
             try:
                 result = await _run_with_retry(agent, question, mode, item.id, label)
+                actual_tools = [tc["name"] for tc in result.tool_calls]
+                tool_arguments = [tc["arguments"] for tc in result.tool_calls]
                 root_span.update(
                     input=question,
                     output=result.text,
                     metadata={
                         "kind": "agent-main-response",
+                        "mode": mode,
+                        # Evaluator Variable mapping 用フラット化フィールド
+                        "expected_tools": expected_tools,
+                        "actual_tools": actual_tools,
+                        "tool_arguments": tool_arguments,
+                        "selected_skills": selected_skills,
+                        # 元の構造化情報も残す (デバッグ / Run 比較用)
                         "tool_calls": [
                             {"name": tc["name"], "arguments": tc["arguments"]}
                             for tc in result.tool_calls
                         ],
-                        "mode": mode,
                     },
                 )
             except Exception as e:
