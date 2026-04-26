@@ -172,7 +172,41 @@ python scripts/run_experiment.py --label iter-NN --description "..."
 
 ---
 
-### Iter-05 〜 Iter-10
+### Iter-05 (ec-shop 実メトリクス命名規則を反映)
+
+- **日時**: 2026-04-26 02:06 UTC
+- **完走率**: 15/15
+- **背景の発見**: ec-shop アプリの Prometheus メトリクスは **`ec_` 接頭辞** (`ec_http_requests_total`, `ec_http_request_duration_seconds_bucket`, `ec_db_pool_used` 等) で公開され、サービス絞り込みは **`service=`** (一般的な `app=` ではない)、HTTP ステータスは **`status=`** (`code=` ではない). 直接 Prometheus `/api/v1/series` を叩いて確認.
+  - 実証クエリ: `histogram_quantile(0.99, sum by (le) (rate(ec_http_request_duration_seconds_bucket{namespace="ec-shop"}[5m])))` → **0.049s** (約 49ms) と返ってくる
+  - 5xx エラー率: 0 (現状実害なし)
+- **修正** (5 ファイル, c+a タグ):
+  - `memory/environment.md` のクエリテンプレート 8 種を `ec_*` 系 + `service=` + `status=` に書換
+  - `src/ta/agent/prompts/system.md` の Few-shot 2 例を `ec-web` + `ec_http_*` 形式に更新 + 重要注記を追加
+  - `src/ta/agent/prompts/mode_engineer.md` のクエリ作法を全面差替
+  - `skills/{latency-regression,error-rate-spike,oom-kill,downstream-dependency}.md` の PromQL 例を更新
+- **LLM-as-Judge スコア**:
+
+  | 観点 | iter-04 | iter-05 | 差分 |
+  |---|---:|---:|---|
+  | **Query Correctness** | 0.86 | **0.94** | **+0.08** ↑↑ |
+  | Skill Pick Accuracy | 0.95 | 0.97 | +0.02 |
+  | Mode Adherence | 0.90 | 0.87 | -0.03 |
+  | Hypothesis Grounding | 0.55 | 0.56 | +0.01 |
+  | Tool Selection Optimality | 0.68 | 0.68 | = |
+  | Safety RBAC (pass率) | 100% | 100% | = |
+
+  **総合平均 0.84** — 引き続き CLAUDE.md の 0.8 以上を維持. Query Correctness は 0.9 越え.
+- **人間レビュー所見**:
+  - **Query Correctness +0.08** が想定どおり最大の改善. 真因 (メトリクス命名規則ミスマッチ) 修正が効いた.
+  - **Tool Selection 横ばい (0.68)**: prompt だけでは動かず、ツール description 自体の文言調整が必要. 次回 (a タグ).
+  - **Hypothesis Grounding +0.01**: judge は依然「具体的数値・ログ抜粋が薄い」を理由に減点中. 「数値を必ず引用」と prompt で強制すべき (c タグ).
+- **次回 Iter-06 候補**:
+  1. Hypothesis Grounding 強化 — `system.md` の「最終回答の構造」に **「## 根拠 セクションには PromQL の値・ログ行・trace id を必ず数字つきで引用する. 引用できない場合は『未確認』を明記する」を強化** (c タグ)
+  2. Tool Selection — 低スコア trace 3 件を目視 → 不要 tool 呼出 / 取りこぼしを抽出 → ツール description (k8s.py の docstring) 調整 (a タグ)
+
+---
+
+### Iter-06 〜 Iter-10
 
 (各周、上記テンプレートで追記)
 

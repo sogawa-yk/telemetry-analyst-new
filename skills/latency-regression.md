@@ -23,7 +23,8 @@ mode: any
 ## 進め方
 
 1. **全体の latency 傾向**をまず見る
-   - PromQL 例: `histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{namespace="ec-shop",app="<svc>"}[5m])) by (le))`
+   - PromQL 例 (ec-shop は `ec_` 接頭辞 + `service=` ラベル):
+     `histogram_quantile(0.99, sum by (service, le) (rate(ec_http_request_duration_seconds_bucket{namespace="ec-shop"}[5m])))`
    - 直近 1h と前日同時刻を比較して差分を定量化
 2. **スロークエリの実トレース**を Tempo で取る
    - `find_slow_requests` (Sift) で該当サービスの遅いトレース id を取得
@@ -35,7 +36,7 @@ mode: any
    - Pod の CPU throttling (`rate(container_cpu_cfs_throttled_periods_total[5m])`)
    - メモリ使用率、GC 頻度
 5. **トラフィック急増の有無**
-   - QPS (`sum(rate(http_requests_total[5m]))`) が増えているか
+   - QPS (`sum(rate(ec_http_requests_total{namespace="ec-shop"}[5m]))`) が増えているか
    - HPA の動作状況 (`k8s_list_hpa`)
 
 ## 回答に含めるべき項目

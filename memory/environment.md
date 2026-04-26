@@ -3,16 +3,28 @@
 ## 監視対象
 
 - Namespace: `ec-shop`
-- 主なサービス (想定): `checkout`, `catalog`, `cart`, `payment`, `order`, `frontend` など
-  - 実際のサービス名は `k8s_list_deployments` で確認すること
-- コンテナラベル慣例: `app=<service>` (Prometheus / Loki のラベルで利用)
+- 主なサービス: 実際のサービス名は `k8s_list_deployments` で都度確認すること.
+  デフォルト Deployment は `ec-web` (Web フロント) と `load-generator` の 2 つ.
+
+## メトリクス命名規則 (重要)
+
+ec-shop アプリは **`ec_` 接頭辞**付きで Prometheus メトリクスを公開している. Loki / Tempo の検索ラベルも実環境のラベル名に従うこと.
+
+- HTTP リクエスト系: **`ec_http_requests_total`** / **`ec_http_request_duration_seconds_bucket`** など
+- 他のドメインメトリクス: `ec_active_requests`, `ec_cart_items_total`, `ec_db_pool_used`, `ec_admin_actions_total` など (`ec_` で始まる)
+- サービス絞り込みラベル: **`service="ec-web"`** (一般的な `app=` ではない. `job` と `service` どちらも使えるが `service` を優先)
+- HTTP ステータス: **`status="500"`** / `status=~"5.."` (`code=` ではない)
+- HTTP メソッド: `method="GET"`
+- HTTP パス: **`exported_endpoint="/path"`** (Prometheus client_python の慣例で `endpoint` ではなく `exported_endpoint`)
+
+> 不明な場合は `list_prometheus_metric_names` で `regex="^ec_"` を打つ、または `list_prometheus_label_names` でラベルを確認してから query を組むこと.
 
 ## 観測基盤
 
-- Prometheus: クラスタ内共通 (ラベル `namespace="ec-shop"` で絞る)
-- Loki: 同上。`{namespace="ec-shop", app="<svc>"}` から始める
-- Tempo: 分散トレース。`find_slow_requests` でスロースパン抽出可
-- Grafana: `search_dashboards` で該当ダッシュボード候補を検索
+- Prometheus: クラスタ内共通 (`namespace="ec-shop"` + 上記命名規則)
+- Loki: ラベルは `{namespace="ec-shop", service="ec-web"}` から始める. 不明なら `list_loki_label_names` で確認.
+- Tempo: 分散トレース. `find_slow_requests` でスロースパン抽出可.
+- Grafana: `search_dashboards` で該当ダッシュボード候補を検索.
 
 ## SLO (初期値、未確定なら未記入)
 
@@ -42,33 +54,49 @@ LLM はここの式をベースに `app` ラベルや時間範囲を差替えて
 
 ### Prometheus
 
-- **エラー率** (5xx):
+- **エラー率** (5xx, 全体):
   ```
-  sum(rate(http_requests_total{namespace="ec-shop", app="<svc>", code=~"5.."}[5m]))
-    / sum(rate(http_requests_total{namespace="ec-shop", app="<svc>"}[5m]))
+  sum(rate(ec_http_requests_total{namespace="ec-shop", status=~"5.."}[5m]))
+    / sum(rate(ec_http_requests_total{namespace="ec-shop"}[5m]))
+  ```
+
+- **エラー率 (サービス・エンドポイント別)**:
+  ```
+  sum by (service, exported_endpoint) (rate(ec_http_requests_total{namespace="ec-shop", status=~"5.."}[5m]))
+    / sum by (service, exported_endpoint) (rate(ec_http_requests_total{namespace="ec-shop"}[5m]))
   ```
 
 - **p99 latency**:
   ```
-  histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{namespace="ec-shop", app="<svc>"}[5m])))
+  histogram_quantile(0.99, sum by (le) (rate(ec_http_request_duration_seconds_bucket{namespace="ec-shop"}[5m])))
+  ```
+
+- **p99 latency (サービス別)**:
+  ```
+  histogram_quantile(0.99, sum by (service, le) (rate(ec_http_request_duration_seconds_bucket{namespace="ec-shop"}[5m])))
+  ```
+
+- **DB 接続プール使用率**:
+  ```
+  ec_db_pool_used{namespace="ec-shop"}
   ```
 
 - **CPU throttling 比率** (>0.05 で要警戒):
   ```
-  rate(container_cpu_cfs_throttled_periods_total{namespace="ec-shop", pod=~"<svc>.*"}[5m])
-    / rate(container_cpu_cfs_periods_total{namespace="ec-shop", pod=~"<svc>.*"}[5m])
+  rate(container_cpu_cfs_throttled_periods_total{namespace="ec-shop", pod=~"ec-web.*"}[5m])
+    / rate(container_cpu_cfs_periods_total{namespace="ec-shop", pod=~"ec-web.*"}[5m])
   ```
 
 - **メモリ使用率** (limit 比 / 0.9 超で OOM 警戒):
   ```
-  container_memory_working_set_bytes{namespace="ec-shop", pod=~"<svc>.*"}
-    / container_spec_memory_limit_bytes{namespace="ec-shop", pod=~"<svc>.*"}
+  container_memory_working_set_bytes{namespace="ec-shop", pod=~"ec-web.*"}
+    / container_spec_memory_limit_bytes{namespace="ec-shop", pod=~"ec-web.*"}
   ```
 
 - **HPA 飽和** (current=max なら頭打ち):
   ```
   kube_horizontalpodautoscaler_status_current_replicas{namespace="ec-shop"}
-  / kube_horizontalpodautoscaler_spec_max_replicas{namespace="ec-shop"}
+    / kube_horizontalpodautoscaler_spec_max_replicas{namespace="ec-shop"}
   ```
 
 - **直近 OOMKilled の有無**:
@@ -80,17 +108,17 @@ LLM はここの式をベースに `app` ラベルや時間範囲を差替えて
 
 - **エラー抽出 (起点)**:
   ```
-  {namespace="ec-shop", app="<svc>"} |~ "(?i)(error|exception|timeout|panic)" | json | limit 200
+  {namespace="ec-shop", service="ec-web"} |~ "(?i)(error|exception|timeout|panic)" | json | limit 200
   ```
 
 - **特定パターン頻度** (Loki stats):
   ```
-  count_over_time({namespace="ec-shop", app="<svc>"} |= "<keyword>" [15m])
+  count_over_time({namespace="ec-shop", service="ec-web"} |= "<keyword>" [15m])
   ```
 
 ### Tempo
 
-- スローエンドポイント抽出: `find_slow_requests(service="<svc>")`
+- スローエンドポイント抽出: `find_slow_requests(service="ec-web")`
 - 個別 span ツリー: `get_trace_by_id(trace_id)`
 
 ## 過去インシデント (参考、随時追記)
