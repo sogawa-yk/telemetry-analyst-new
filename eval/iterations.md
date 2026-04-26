@@ -271,7 +271,40 @@ python scripts/run_experiment.py --label iter-NN --description "..."
 
 ---
 
-### Iter-08 〜 Iter-10
+### Iter-08 (Tool Selection 改善試行 — 効果限定的)
+
+- **日時**: 2026-04-26 09:31 UTC
+- **完走率**: 15/15
+- **修正** (c+a タグ):
+  - `src/ta/agent/prompts/system.md` に「ツール選択の指針」セクションを追加 (直行ツール表 + Prometheus 探索系の使用制限)
+  - `src/ta/agent/tools/k8s.py` の `k8s_list_pods` / `k8s_list_deployments` docstring に「直行ツール」「1 回呼べば十分」を明示
+- **LLM-as-Judge スコア**:
+
+  | 観点 | iter-07 | iter-08 | 差分 |
+  |---|---:|---:|---|
+  | **Hypothesis Grounding** | 0.98 | **1.00** | +0.02 (満点) |
+  | **Mode Adherence** | 0.90 | **0.96** | **+0.06** ↑ |
+  | Query Correctness | 0.89 | 0.86 | -0.03 |
+  | Skill Pick Accuracy | 0.95 | 0.95 | = |
+  | **Tool Selection Optimality** | 0.71 | **0.67** | **-0.04** ↓ (逆効果) |
+  | Safety RBAC (pass率) | 100% | 100% | = |
+
+  **総合平均 0.91** (前回 0.91 と同じ)
+
+- **人間レビュー所見**:
+  - Hypothesis Grounding 完全満点 (1.00). 評価器修正の効果が定着.
+  - Mode Adherence +0.06 は副次効果. 直行ツール表が "engineer モードのコピペ可能性" に貢献.
+  - **Tool Selection が逆に -0.04**: prompt 強化が逆効果. 主因:
+    - `alert-status-12` (0.2): 依然 `search_dashboards` を選び、`list_alert_rules` への切替が効かない
+    - `latency-checkout-01/02` 系 (0.5): 同じ `query_prometheus` や `list_prometheus_label_values` を 3〜4 回冗長呼出
+  - Iter-07/08 の差 0.71→0.67 は judge 判定揺れの範囲だが、prompt 強化では本質的限界に到達.
+- **次回 Iter-09 候補**:
+  1. (a タグ - 強い手) `src/ta/agent/tools/grafana_mcp.py` の allowed_tools から **冗長呼出されがちな `list_prometheus_label_names` / `list_prometheus_label_values` / `list_loki_label_names` / `list_loki_label_values` を除外**. エージェントは label 探索が物理的に出来なくなり、直接 query するしかなくなる
+  2. (c タグ - 弱い手) system.md の「ツール選択の指針」を簡素化、`list_alert_rules` 優先を最初の原則に格上げ
+
+---
+
+### Iter-09 / 10
 
 (各周、上記テンプレートで追記)
 

@@ -116,8 +116,11 @@ def _truncate(s: str, max_chars: int, suffix: str = "\n... (truncated)") -> str:
 def k8s_list_pods() -> str:
     """監視対象 namespace (ec-shop) の Pod 一覧を取得する.
 
-    状態 / restart 数 / age が分かる. 障害調査で最初の一手として使う.
-    他 namespace は権限外のため失敗する.
+    状態 / restart 数 / age が分かる. 「Pod の状態」「ec-shop の健康」
+    系の質問への **直行ツール** で 1 回呼べば十分. 他 namespace は権限外.
+
+    結果から個別 Pod の調査が必要なら次に `k8s_describe_pod(name=...)`
+    または `k8s_pod_logs(name=...)` を呼ぶ.
     """
     ns = get_settings().target_namespace
     if err := _check_scope(ns):
@@ -341,7 +344,8 @@ def k8s_list_events(since_seconds: int = 900, kind: str | None = None) -> str:
 def k8s_list_deployments() -> str:
     """監視対象 namespace の Deployment 一覧を取得する.
 
-    コンテナイメージのタグ確認 (直近デプロイ時刻の推定) に使う.
+    コンテナイメージのタグ確認 (直近デプロイ時刻の推定) に使う **直行ツール**.
+    1 回呼べば十分で、繰り返し呼ばないこと.
     """
     ns = get_settings().target_namespace
     if err := _check_scope(ns):
