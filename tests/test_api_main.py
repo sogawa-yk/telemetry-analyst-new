@@ -21,8 +21,18 @@ def mock_agent() -> MagicMock:
 
     async def fake_run_stream(*args, **kwargs):  # type: ignore[no-untyped-def]
         yield {"type": "delta", "text": "こんにちは"}
-        yield {"type": "tool_call", "name": "k8s_list_pods", "arguments": "{}"}
-        yield {"type": "tool_result", "name": "k8s_list_pods", "result": "Pods OK"}
+        yield {
+            "type": "tool_call",
+            "name": "k8s_list_pods",
+            "arguments": "{}",
+            "call_id": "call_abc",
+        }
+        yield {
+            "type": "tool_result",
+            "name": "k8s_list_pods",
+            "result": "Pods OK",
+            "call_id": "call_abc",
+        }
         yield {"type": "done", "response_id": "resp_xxx", "text": "こんにちは"}
 
     a.run_stream = fake_run_stream

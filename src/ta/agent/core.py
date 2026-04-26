@@ -249,12 +249,17 @@ class Agent:
                     raw = getattr(item, "raw_item", None)
                     name = getattr(raw, "name", None) or getattr(raw, "type", "?")
                     args = getattr(raw, "arguments", "") or ""
-                    call_id = getattr(raw, "call_id", None) or getattr(raw, "id", None)
+                    call_id = getattr(raw, "call_id", None) or getattr(raw, "id", None) or ""
                     if call_id:
                         tool_name_by_call_id[call_id] = str(name)
                     otel_setup.record_tool_invocation(str(name), "called")
                     turn_count += 1
-                    yield {"type": "tool_call", "name": str(name), "arguments": args}
+                    yield {
+                        "type": "tool_call",
+                        "name": str(name),
+                        "arguments": args,
+                        "call_id": str(call_id),
+                    }
                 elif itype == "tool_call_output_item":
                     raw = getattr(item, "raw_item", None)
                     out = getattr(item, "output", "") or ""
@@ -265,7 +270,12 @@ class Agent:
                     else:
                         call_id = getattr(raw, "call_id", "") or ""
                     name = tool_name_by_call_id.get(call_id) or "(tool)"
-                    yield {"type": "tool_result", "name": name, "result": str(out)}
+                    yield {
+                        "type": "tool_result",
+                        "name": name,
+                        "result": str(out),
+                        "call_id": str(call_id),
+                    }
                 # message_output_item は delta で逐次受信済みのため再 yield は不要
 
         otel_setup.record_response_latency(time.monotonic() - start, mode)

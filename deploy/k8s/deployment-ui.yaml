@@ -27,7 +27,7 @@ spec:
         - name: ocir
       containers:
         - name: ui
-          image: syd.ocir.io/orasejapan/telemetry-analyst-ui:v0.2.7
+          image: syd.ocir.io/orasejapan/telemetry-analyst-ui:v0.2.8
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8081
