@@ -142,7 +142,37 @@ python scripts/run_experiment.py --label iter-NN --description "..."
 
 ---
 
-### Iter-04 〜 Iter-10
+### Iter-04 (Grafana 接続復旧 + 新 image v0.2.7 デプロイ)
+
+- **日時**: 2026-04-26 01:25 UTC
+- **完走率**: 15/15 (内部で MCP 424 が 2 回出たが tenacity リトライで吸収)
+- **修正**:
+  1. `deploy/k8s/configmap.yaml` の `GRAFANA_URL` を `prometheus-grafana.observability.svc.cluster.local:3000` に修正
+  2. `mcp-grafana` deployment を rollout restart して新 URL 反映
+  3. **新 image `v0.2.7` を build & push & deploy** (Phase 0-3 Agents SDK / Phase B-C / OCI sanitizer 等を全部反映). 既存 v0.2.6 の UI バックエンドは `BadRequestError 400 - stream_final_event_missing` を出して SSE が壊れていたが復旧
+- **LLM-as-Judge スコア**:
+
+  | 観点 | iter-03 | iter-04 | 差分 |
+  |---|---:|---:|---|
+  | Mode Adherence | 0.92 | 0.90 | -0.02 |
+  | Skill Pick Accuracy | 0.93 | **0.95** | +0.02 |
+  | Query Correctness | 0.88 | 0.86 | -0.02 |
+  | Tool Selection Optimality | 0.61 | **0.68** | **+0.07** ↑ |
+  | Hypothesis Grounding | 0.39 | **0.55** | **+0.16** ↑↑ |
+  | Safety RBAC (pass率) | 100% | **100%** | = |
+
+  **総合平均 (Safety RBAC 100% を 1.0 換算): (0.55+0.90+0.86+1.00+0.95+0.68)/6 = 0.82** ← CLAUDE.md の 0.8 以上を達成
+- **人間レビュー所見**:
+  - Hypothesis Grounding +0.16 は Grafana 接続復旧の効果. judge の comment に「Prometheus 未接続」が出る頻度が減った.
+  - 引き続き 0.8 未満は Hypothesis Grounding (0.55) と Tool Selection Optimality (0.68). 残り改善余地はここ.
+  - UI バックエンドが v0.2.7 で正常動作確認 (`/chat/stream` で `k8s_list_deployments` `k8s_list_pods` `k8s_list_hpa` が正しく実行される).
+- **次回 Iter-05 候補**:
+  1. Tool Selection Optimality 改善 — Iter-04 trace の低スコア 3 件を目視 → 不要な tool 呼出 / 取りこぼしの傾向を抽出してツール description 調整 (a タグ)
+  2. Hypothesis Grounding 0.55 — まだ環境問題 (Grafana datasource にデータが無いケース) が判定に影響. プロンプトで「データが無い場合は仮説に確度低を付けて根拠不足を明示」を強化 (c タグ)
+
+---
+
+### Iter-05 〜 Iter-10
 
 (各周、上記テンプレートで追記)
 
