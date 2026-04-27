@@ -25,3 +25,6 @@ os.environ.setdefault("LANGFUSE_SECRET_KEY", "")
 os.environ.setdefault("LANGFUSE_HOST", "http://test-langfuse.invalid:3000")
 # OTel も外部接続を起こさないようダミー endpoint
 os.environ.setdefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://test-otel.invalid:4317")
+# A2A サーバ用. 未設定だと 503 になり認証/エンドポイントテストができないため必須
+os.environ.setdefault("A2A_AUTH_TOKEN", "test-a2a-token")
+os.environ.setdefault("A2A_PUBLIC_URL", "http://test-a2a.invalid/a2a")

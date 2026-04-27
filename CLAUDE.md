@@ -64,11 +64,12 @@ RBAC (Role スコープ) と実装レイヤの双方で遮断する二重防御�
 
 | 項目 | 旧版 | 新版 |
 | --- | --- | --- |
-| エージェント実装 | LangGraph ReAct + A2A 登録 | 単一 ReAct (Responses API ネイティブ) |
+| エージェント実装 | LangGraph ReAct + 自作 A2A | 単一 ReAct (OpenAI Agents SDK) + 公式 a2a-sdk |
 | LLM API | Responses + Chat Completions 併用 | Responses API に一本化 |
 | メモリ | PostgreSQL + pgvector フォールバック | Conversations API 委任 |
 | ツール MCP 連携 | langchain-mcp-adapters | Responses API の `tools: {type: "mcp"}` |
 | LLM-as-Judge | 未設定 | 初期セットアップから実施 |
+| A2A | 自作 JSON-RPC 薄実装 | 公式 `a2a-sdk` v1.0 (v0.2.9〜). サーバ側 expose のみ、ClusterIP 限定、Bearer Token 認証 |
 
 ## 開発コマンド
 

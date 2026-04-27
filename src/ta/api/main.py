@@ -31,7 +31,25 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     langfuse_setup.flush()
 
 
-app = FastAPI(title="Telemetry Analyst API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Telemetry Analyst API", version="0.2.9", lifespan=lifespan)
+
+
+# -----------------------------------------------------------------------------
+# A2A (Agent-to-Agent) サーバを /a2a に mount
+# -----------------------------------------------------------------------------
+# 既存 Chainlit/CLI 用の /conversations / /chat/stream とは別経路で、
+# 他エージェントから本サーバを呼べるよう A2A プロトコルで expose する.
+# 認証は Bearer Token (環境変数 A2A_AUTH_TOKEN). 未設定だと 503 で無効化.
+def _mount_a2a() -> None:
+    from ta.a2a.auth import BearerTokenMiddleware
+    from ta.a2a.server import build_a2a_starlette_app
+
+    a2a_app = build_a2a_starlette_app()
+    a2a_app.add_middleware(BearerTokenMiddleware)
+    app.mount("/a2a", a2a_app)
+
+
+_mount_a2a()
 
 
 # -----------------------------------------------------------------------------
