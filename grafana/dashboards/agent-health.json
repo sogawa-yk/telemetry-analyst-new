@@ -1,10 +1,10 @@
 {
   "uid": "ta-agent-health",
   "title": "Telemetry Analyst — Agent Health",
-  "tags": ["telemetry-analyst", "agent", "ai", "llm"],
+  "tags": ["telemetry-analyst", "agent", "ai", "llm", "ec-shop"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "30s",
   "time": {"from": "now-1h", "to": "now"},
   "templating": {
@@ -28,10 +28,17 @@
   },
   "panels": [
     {
+      "id": 100,
+      "type": "row",
+      "title": "Health (overall)",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "collapsed": false
+    },
+    {
       "id": 1,
       "type": "timeseries",
       "title": "Response latency percentiles (mode=$mode)",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 1},
       "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
       "fieldConfig": {"defaults": {"unit": "s"}},
       "targets": [
@@ -56,7 +63,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "Requests per second (by mode)",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 1},
       "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
       "fieldConfig": {"defaults": {"unit": "reqps"}},
       "targets": [
@@ -68,10 +75,106 @@
       ]
     },
     {
+      "id": 5,
+      "type": "stat",
+      "title": "Active sessions",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "targets": [{"refId": "A", "expr": "sum(ta_agent_active_sessions)"}]
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Avg tokens / request (5m)",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 5000},
+              {"color": "red", "value": 15000}
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ta_agent_llm_tokens_total[5m])) / clamp_min(sum(rate(ta_agent_response_latency_seconds_count[5m])), 0.001)"
+        }
+      ]
+    },
+    {
+      "id": 101,
+      "type": "row",
+      "title": "ReAct & Prompts",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 9},
+      "collapsed": false
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "ReAct turns per run (mode=$mode)",
+      "description": "1 リクエストで Agent が呼んだ tool 数. 高すぎると冗長呼出の兆候.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 10},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(ta_agent_react_turns_bucket{mode=~\"$mode\"}[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(ta_agent_react_turns_bucket{mode=~\"$mode\"}[5m])))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(ta_agent_react_turns_bucket{mode=~\"$mode\"}[5m])))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Instructions length (chars, mode=$mode)",
+      "description": "build_instructions が生成する system + skill 注入後のプロンプト長. mode 比較で skill 注入の偏りを観測.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 10},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le, mode) (rate(ta_agent_prompt_chars_bucket{mode=~\"$mode\"}[5m])))",
+          "legendFormat": "{{mode}} p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le, mode) (rate(ta_agent_prompt_chars_bucket{mode=~\"$mode\"}[5m])))",
+          "legendFormat": "{{mode}} p95"
+        }
+      ]
+    },
+    {
+      "id": 102,
+      "type": "row",
+      "title": "Tools",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 18},
+      "collapsed": false
+    },
+    {
       "id": 3,
       "type": "timeseries",
       "title": "Tool invocations (by tool, outcome)",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 19},
       "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
       "fieldConfig": {"defaults": {"unit": "short"}},
       "targets": [
@@ -83,10 +186,28 @@
       ]
     },
     {
+      "id": 7,
+      "type": "barchart",
+      "title": "Top 10 most used tools (range)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 19},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "options": {"orientation": "horizontal"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, sum by (tool) (increase(ta_agent_tool_invocations_total[$__range])))",
+          "legendFormat": "{{tool}}",
+          "instant": true
+        }
+      ]
+    },
+    {
       "id": 4,
       "type": "stat",
       "title": "Tool error rate (5m)",
-      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 8},
+      "description": "outcome != 'ok' の割合. 0.05 (5%) 超で要警戒.",
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 27},
       "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
       "fieldConfig": {
         "defaults": {
@@ -104,26 +225,64 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(ta_agent_tool_invocations_total{outcome!=\"ok\"}[5m])) / ignoring() sum(rate(ta_agent_tool_invocations_total[5m]))"
+          "expr": "sum(rate(ta_agent_tool_invocations_total{outcome!=\"ok\"}[5m])) / clamp_min(sum(rate(ta_agent_tool_invocations_total[5m])), 0.001)"
         }
       ]
     },
     {
-      "id": 5,
-      "type": "stat",
-      "title": "Active sessions",
-      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 8},
+      "id": 103,
+      "type": "row",
+      "title": "Skills picked",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 31},
+      "collapsed": false
+    },
+    {
+      "id": 10,
+      "type": "barchart",
+      "title": "Top skills picked (range)",
+      "description": "SkillRetriever が選んだ skill の頻度. 常時注入 (cost-aware-query / explain-*) は上位に出やすい.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
       "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "options": {"orientation": "horizontal"},
       "targets": [
-        {"refId": "A", "expr": "sum(ta_agent_active_sessions)"}
+        {
+          "refId": "A",
+          "expr": "topk(15, sum by (skill) (increase(ta_skill_hit_total[$__range])))",
+          "legendFormat": "{{skill}}",
+          "instant": true
+        }
       ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Skill picks rate (by skill, mode=$mode)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (skill) (rate(ta_skill_hit_total{mode=~\"$mode\"}[5m]))",
+          "legendFormat": "{{skill}}"
+        }
+      ]
+    },
+    {
+      "id": 104,
+      "type": "row",
+      "title": "LLM Tokens (cost)",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 40},
+      "collapsed": false
     },
     {
       "id": 6,
       "type": "timeseries",
-      "title": "LLM tokens per second (by kind)",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "title": "LLM tokens per second (by kind, model)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 41},
       "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
       "targets": [
         {
           "refId": "A",
@@ -133,16 +292,20 @@
       ]
     },
     {
-      "id": 7,
-      "type": "timeseries",
-      "title": "Top 10 most used tools (5m)",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "id": 14,
+      "type": "stat",
+      "title": "Tokens consumed (range)",
+      "description": "ダッシュボード時間範囲で消費した累積トークン (input/output 別).",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 41},
       "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "options": {"orientation": "vertical", "textMode": "value_and_name"},
       "targets": [
         {
           "refId": "A",
-          "expr": "topk(10, sum by (tool) (rate(ta_agent_tool_invocations_total[5m])))",
-          "legendFormat": "{{tool}}"
+          "expr": "sum by (kind) (increase(ta_agent_llm_tokens_total[$__range]))",
+          "legendFormat": "{{kind}}",
+          "instant": true
         }
       ]
     }
