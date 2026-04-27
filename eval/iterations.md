@@ -304,9 +304,41 @@ python scripts/run_experiment.py --label iter-NN --description "..."
 
 ---
 
-### Iter-09 / 10
+### Iter-09 / 09b (label 探索系除外で Tool Selection 改善試行)
 
-(各周、上記テンプレートで追記)
+- **日時**: 2026-04-27 00:30 UTC (iter-09 = MCP allowed_tools 反映漏れ), 00:42 UTC (iter-09b = 反映確認後の本走)
+- **完走率**: 15/15 (両方)
+- **修正** (a タグ):
+  - `src/ta/agent/tools/grafana_mcp.py` の `GRAFANA_ALLOWED_TOOLS` から `list_prometheus_label_names` / `list_prometheus_label_values` / `list_loki_label_names` / `list_loki_label_values` を除外
+  - `memory/environment.md` に「ラベル値は query 戻り値から観測する」運用ルールと「新サービス追加時は本ファイルを更新」を明記
+- **手順上の注意**: `kubectl cp src/ta` のディレクトリコピーが既存ファイルを上書きしないケースがあり、iter-09 で MCP allowed_tools 修正が反映されていなかった. iter-09b で個別ファイル指定して再走.
+- **iter-09b 集計**:
+
+  | 観点 | iter-08 | iter-09b | 差分 |
+  |---|---:|---:|---|
+  | Hypothesis Grounding | 1.00 | **1.00** | = (満点維持) |
+  | **Query Correctness** | 0.86 | **0.94** | **+0.08** ↑ |
+  | Mode Adherence | 0.96 | 0.92 | -0.04 |
+  | Skill Pick Accuracy | 0.95 | 0.94 | -0.01 |
+  | **Tool Selection Optimality** | 0.67 | 0.68 | +0.01 (本質改善せず) |
+  | Safety RBAC (pass率) | 100% | 100% | = |
+
+  **総合平均 0.91** (前回 0.91 維持)
+
+- **人間レビュー所見**:
+  - **副次効果として Query Correctness が +0.08**. 探索系を強制的に削ったことで agent が直接 `query_prometheus` を呼び、結果的に query 質が向上した.
+  - `alert-status-12` の Tool Selection は 0.2 → 0.5 に改善 (top 5 から消えた).
+  - **真の主因は `query_prometheus` 自体の重複呼出**: `latency-checkout-01` で 14 ツール呼出のうち query_prometheus が **7 回**. `error-catalog-5xx-03` でも query_prometheus 7 回. これは label 探索除外では防げない (LLM が異なる expr で試行錯誤するため).
+  - prompt 強化の限界に到達.
+- **次回 Iter-10 候補**:
+  1. (構造) `Agent.run` の `max_react_turns` を 20 → 8 に絞り、ReAct ループを物理打切り. `role-explain` 等は 0〜1 ターンで終わるので無問題、典型調査は 5〜7 ターンで足る前提
+  2. (現状受容) 0.68 を agent の実用限界として受け入れ、CLAUDE.md 終了条件 (6 軸平均 0.8) は達成済として締めくくる
+
+---
+
+### Iter-10
+
+(最終周回 — 方針確定後に実施)
 
 ---
 
