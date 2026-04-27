@@ -17,7 +17,9 @@ ec-shop アプリは **`ec_` 接頭辞**付きで Prometheus メトリクスを�
 - HTTP メソッド: `method="GET"`
 - HTTP パス: **`exported_endpoint="/path"`** (Prometheus client_python の慣例で `endpoint` ではなく `exported_endpoint`)
 
-> 不明な場合は `list_prometheus_metric_names` で `regex="^ec_"` を打つ、または `list_prometheus_label_names` でラベルを確認してから query を組むこと.
+> 不明なメトリクス名は `list_prometheus_metric_names` で `regex="^ec_"` を打って探索. ラベル探索ツール (`list_prometheus_label_*` 等) は Iter-09 以降で除外したため、ラベル値は **`query_prometheus` の戻り値に含まれる label 群から観測**するか、`sum by (<label>) (...)` で集計して値を確認すること.
+
+> 運用ルール: ec-shop に新サービスが追加された際は **本ファイルを更新**する (新 service 名、追加ラベル、新メトリクス). environment.md がエージェントの第一情報源.
 
 ## 観測基盤
 
