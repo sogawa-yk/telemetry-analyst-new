@@ -28,7 +28,7 @@ spec:
         - name: ocir
       containers:
         - name: api
-          image: syd.ocir.io/orasejapan/telemetry-analyst:v0.2.8
+          image: syd.ocir.io/orasejapan/telemetry-analyst:v0.2.10
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -59,6 +59,13 @@ spec:
                 secretKeyRef:
                   name: ta-agent-grafana
                   key: GRAFANA_TOKEN
+                  optional: true
+            # A2A サーバ用 Bearer Token. 未設定だと /a2a/* は 503 で無効化される.
+            - name: A2A_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ta-agent-a2a-token
+                  key: token
                   optional: true
           resources:
             requests:

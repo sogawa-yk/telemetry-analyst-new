@@ -16,6 +16,8 @@ dependencies = [
     "openai>=1.60.0,<3.0.0",
     # Agents SDK (Phase 0 で自前 ReAct ループを置換するため評価中)
     "openai-agents>=0.14,<1.0",
+    # A2A (Agent-to-Agent) サーバ. 他エージェントから本サーバを呼べるよう expose
+    "a2a-sdk[http-server]>=1.0,<2.0",
 
     # API / HTTP
     "fastapi>=0.115",

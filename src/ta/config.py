@@ -67,6 +67,14 @@ class Settings(BaseSettings):
     # ツール 1 件の戻り値最大文字数 (LLM コンテキスト節約)
     max_tool_output_chars: int = Field(8000, alias="TA_MAX_TOOL_OUTPUT_CHARS")
 
+    # A2A (Agent-to-Agent) サーバ設定. token 未設定なら /a2a/* は 503 で無効化
+    a2a_auth_token: str | None = Field(None, alias="A2A_AUTH_TOKEN")
+    # Agent Card の `supported_interfaces[].url` に書く公開 URL.
+    # ClusterIP 公開のみなので Service DNS を既定値にする.
+    a2a_public_url: str = Field(
+        "http://ta-agent.telemetry-analyst.svc:8080/a2a", alias="A2A_PUBLIC_URL"
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
