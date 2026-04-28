@@ -13,7 +13,7 @@ metadata:
 spec:
   ingressClassName: ic
   rules:
-    - host: ta.sogawa-yk.com
+    - host: ta.devday26.sogawa-yk.com
       http:
         paths:
           - path: /
@@ -23,7 +23,7 @@ spec:
                 name: ta-agent-ui
                 port:
                   number: 8081
-    - host: ta-api.sogawa-yk.com
+    - host: ta-api.devday26.sogawa-yk.com
       http:
         paths:
           - path: /
@@ -35,8 +35,8 @@ spec:
                   number: 8080
   tls:
     - hosts:
-        - ta.sogawa-yk.com
-        - ta-api.sogawa-yk.com
+        - ta.devday26.sogawa-yk.com
+        - ta-api.devday26.sogawa-yk.com
       secretName: wildcard-sogawa-yk-com-tls
 ---
 # MCP Grafana は healthcheck path が異なる (/healthz) ので別 Ingress に分離.
@@ -56,7 +56,7 @@ metadata:
 spec:
   ingressClassName: ic
   rules:
-    - host: ta-mcp.sogawa-yk.com
+    - host: ta-mcp.devday26.sogawa-yk.com
       http:
         paths:
           - path: /
@@ -68,5 +68,5 @@ spec:
                   number: 8000
   tls:
     - hosts:
-        - ta-mcp.sogawa-yk.com
+        - ta-mcp.devday26.sogawa-yk.com
       secretName: wildcard-sogawa-yk-com-tls

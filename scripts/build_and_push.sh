@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # 使用例: ./scripts/build_and_push.sh v0.2.0
 # Docker イメージをビルドして OCIR へプッシュする.
-# レジストリ: syd.ocir.io/orasejapan/telemetry-analyst[-ui]
+# レジストリ: kix.ocir.io/nr3c2r62ocsa/telemetry-analyst/api[-ui]
 set -euo pipefail
 
 TAG="${1:?タグを指定してください (例: v0.2.0)}"
 
-API_IMAGE="syd.ocir.io/orasejapan/telemetry-analyst:${TAG}"
-UI_IMAGE="syd.ocir.io/orasejapan/telemetry-analyst-ui:${TAG}"
+API_IMAGE="kix.ocir.io/nr3c2r62ocsa/telemetry-analyst/api:${TAG}"
+UI_IMAGE="kix.ocir.io/nr3c2r62ocsa/telemetry-analyst/ui:${TAG}"
 
 BUILD_FLAGS="${BUILD_FLAGS:-}"
 
