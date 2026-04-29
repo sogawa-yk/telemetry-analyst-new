@@ -12,6 +12,7 @@ resources:
   - deployment-ui.yaml
   - service.yaml
   - ingress.yaml
+  - grafana-dashboard.yaml
 labels:
   - pairs:
       app.kubernetes.io/part-of: telemetry-analyst

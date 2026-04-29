@@ -308,6 +308,125 @@
           "instant": true
         }
       ]
+    },
+    {
+      "id": 105,
+      "type": "row",
+      "title": "Upstream HTTP (ta-agent → mcp-grafana / Grafana / OCI)",
+      "description": "ta-agent の httpx clientから外部への HTTP 呼出. 「反応が遅い」 調査の起点. otel httpx instrumentation 由来.",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 49},
+      "collapsed": false
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Upstream HTTP latency p50/p95/p99 (ta-agent)",
+      "description": "ta-agent → 外部 HTTP の応答時間. 上昇したら mcp-grafana / Grafana / OCI のいずれかが詰まっている.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 50},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "fieldConfig": {"defaults": {"unit": "ms"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(http_client_duration_milliseconds_bucket{job=\"ta-agent\"}[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_client_duration_milliseconds_bucket{job=\"ta-agent\"}[5m])))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_client_duration_milliseconds_bucket{job=\"ta-agent\"}[5m])))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Upstream HTTP requests/s by status code (ta-agent)",
+      "description": "5xx / 4xx の急増は上流 (mcp-grafana, Grafana, OCI) の異常を示す.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 50},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (http_status_code) (rate(http_client_duration_milliseconds_count{job=\"ta-agent\"}[5m]))",
+          "legendFormat": "{{http_status_code}}"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "stat",
+      "title": "Upstream HTTP error rate (5m)",
+      "description": "status >= 400 の割合. 0.05 (5%) 超で要警戒.",
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 58},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.01},
+              {"color": "red", "value": 0.05}
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(http_client_duration_milliseconds_count{job=\"ta-agent\",http_status_code=~\"4..|5..\"}[5m])) / clamp_min(sum(rate(http_client_duration_milliseconds_count{job=\"ta-agent\"}[5m])), 0.001)"
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "stat",
+      "title": "Avg upstream latency (5m)",
+      "description": "平均応答時間. 急上昇は上流の bottleneck を示す.",
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 58},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 500},
+              {"color": "red", "value": 2000}
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(http_client_duration_milliseconds_sum{job=\"ta-agent\"}[5m])) / clamp_min(sum(rate(http_client_duration_milliseconds_count{job=\"ta-agent\"}[5m])), 0.001)"
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "type": "stat",
+      "title": "Upstream HTTP req rate (5m)",
+      "description": "ta-agent から外部への HTTP コール頻度.",
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 58},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROM}"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(http_client_duration_milliseconds_count{job=\"ta-agent\"}[5m]))"
+        }
+      ]
     }
   ]
 }
