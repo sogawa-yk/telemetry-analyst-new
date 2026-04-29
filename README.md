@@ -56,3 +56,14 @@ python scripts/setup_langfuse.py       # LLM Connection + Evaluator + Dataset
 python -m ta.eval.run_golden_set       # 1 周実行 (Langfuse Experiment)
 # Langfuse UI でスコア確認 → 該当箇所修正 → 再実行 を 10 周以上
 ```
+
+### 負荷シナリオ × 検出検証
+
+k6 で ec-shop に意図的な負荷を掛け、UI 経由で telemetry-analyst が検知できるかを手動レビューする。
+詳細は [`docs/runbook/load_detection.md`](docs/runbook/load_detection.md)。
+
+```bash
+chaos/scripts/k6-in-cluster.sh spike-load    # 0→200 VU spike
+chaos/scripts/k6-in-cluster.sh error-storm   # 4xx/404 ログ大量生成
+chaos/scripts/k6-in-cluster.sh --cleanup     # 全 k6 Job/CM 削除
+```
