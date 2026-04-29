@@ -29,9 +29,13 @@ from agents import (
     Runner,
     set_default_openai_api,
     set_default_openai_client,
+    set_tracing_disabled,
 )
-from openai import AsyncOpenAI
-from openai.types.responses import ResponseTextDeltaEvent
+from openai import APIStatusError, AsyncOpenAI
+from openai.types.responses import (
+    ResponseIncompleteEvent,
+    ResponseTextDeltaEvent,
+)
 
 from ta.agent._oci_compat import make_oci_http_client
 from ta.agent.prompts import __path__ as _PROMPTS_PKG
@@ -46,6 +50,11 @@ logger = logging.getLogger(__name__)
 _PROMPTS_DIR = Path(_PROMPTS_PKG[0])
 _SKILLS_DIR = Path(get_settings().skills_dir)
 _MEMORY_DIR = Path(get_settings().memory_dir)
+
+# OCI ap-osaka-1 Responses API streaming は stream_final_event_missing を散発的に
+# 返す (検証で 30-50%). 部分出力が無い場合に限り内部 retry する.
+# retry を使い切っても failure 続きなら non-streaming にフォールバック (これは 100%).
+_OCI_STREAM_RETRY_MAX = 5
 
 
 @dataclass
@@ -70,8 +79,10 @@ class Agent:
         )
         set_default_openai_client(self._async_client)
         set_default_openai_api("responses")
-        # トレースの設定は ta.telemetry.langfuse_setup.init_langfuse() に集約.
-        # (Agent インスタンス生成前に init_langfuse を呼ぶ運用)
+        # Agents SDK の OpenAI hosted tracing (api.openai.com/v1/traces/ingest) を無効化.
+        # OCI 用 API key では 401 になりノイズになる. アプリ側の trace は
+        # ta.telemetry.langfuse_setup.init_langfuse() (OTel + openinference) に集約.
+        set_tracing_disabled(True)
 
         # Pydantic の Conversations API シリアライズ警告 (str → content list 変換時に出る non-fatal)
         warnings.filterwarnings(
@@ -174,14 +185,27 @@ class Agent:
         for skill_name in self.picked_skills(user_msg, mode):
             otel_setup.record_skill_hit(skill_name, mode)
 
-        result = await Runner.run(
-            sdk_agent,
-            input=user_msg,
-            session=session,
-            max_turns=self._max_react_turns,
-            run_config=self._run_config(mode, metadata),
-        )
+        # OCI Responses API streaming は ap-osaka-1 で stream_final_event_missing が
+        # 散発的に発生し、final_output が空文字で返る (~30% 程度). 空応答は再試行する.
+        result = None
+        for attempt in range(_OCI_STREAM_RETRY_MAX):
+            result = await Runner.run(
+                sdk_agent,
+                input=user_msg,
+                session=session,
+                max_turns=self._max_react_turns,
+                run_config=self._run_config(mode, metadata),
+            )
+            text = str(result.final_output) if result.final_output is not None else ""
+            if text or attempt == _OCI_STREAM_RETRY_MAX - 1:
+                break
+            logger.warning(
+                "OCI streaming returned empty output (attempt %d/%d), retrying",
+                attempt + 1,
+                _OCI_STREAM_RETRY_MAX,
+            )
 
+        assert result is not None
         tool_calls_record = _extract_tool_calls(result.new_items)
         otel_setup.record_response_latency(time.monotonic() - start, mode)
         otel_setup.record_react_turns(len(tool_calls_record), mode)
@@ -227,56 +251,136 @@ class Agent:
         tool_name_by_call_id: dict[str, str] = {}
         turn_count = 0
 
-        result = Runner.run_streamed(
-            sdk_agent,
-            input=user_msg,
-            session=session,
-            max_turns=self._max_react_turns,
-            run_config=self._run_config(mode, metadata),
-        )
+        # OCI ap-osaka-1 の streaming flakiness 対策: stream_final_event_missing で
+        # 部分出力が無い場合は内部的に再試行する. 外部から見ると単純な遅延に見える.
+        # 424 Failed Dependency (MCP tool list 取得失敗) も同様に retry.
+        result = None
+        for attempt in range(_OCI_STREAM_RETRY_MAX):
+            stream_failed_no_output = False
+            result = Runner.run_streamed(
+                sdk_agent,
+                input=user_msg,
+                session=session,
+                max_turns=self._max_react_turns,
+                run_config=self._run_config(mode, metadata),
+            )
+            try:
+                async for event in result.stream_events():
+                    if event.type == "raw_response_event":
+                        if isinstance(event.data, ResponseTextDeltaEvent):
+                            delta = event.data.delta or ""
+                            if delta:
+                                text_parts.append(delta)
+                                yield {"type": "delta", "text": delta}
+                        elif isinstance(event.data, ResponseIncompleteEvent):
+                            details = getattr(
+                                event.data.response, "incomplete_details", None
+                            )
+                            reason = getattr(details, "reason", None) if details else None
+                            # 出力済の text/tool が無い場合のみ retry (重複 yield を防ぐ)
+                            if (
+                                reason == "stream_final_event_missing"
+                                and not text_parts
+                                and turn_count == 0
+                                and attempt < _OCI_STREAM_RETRY_MAX - 1
+                            ):
+                                logger.warning(
+                                    "OCI stream_final_event_missing (attempt %d/%d), retrying",
+                                    attempt + 1,
+                                    _OCI_STREAM_RETRY_MAX,
+                                )
+                                stream_failed_no_output = True
+                                break
+                    elif event.type == "run_item_stream_event":
+                        item = event.item
+                        itype = getattr(item, "type", None)
+                        if itype == "tool_call_item":
+                            raw = getattr(item, "raw_item", None)
+                            name = getattr(raw, "name", None) or getattr(raw, "type", "?")
+                            args = getattr(raw, "arguments", "") or ""
+                            call_id = (
+                                getattr(raw, "call_id", None)
+                                or getattr(raw, "id", None)
+                                or ""
+                            )
+                            if call_id:
+                                tool_name_by_call_id[call_id] = str(name)
+                            otel_setup.record_tool_invocation(str(name), "called")
+                            turn_count += 1
+                            yield {
+                                "type": "tool_call",
+                                "name": str(name),
+                                "arguments": args,
+                                "call_id": str(call_id),
+                            }
+                        elif itype == "tool_call_output_item":
+                            raw = getattr(item, "raw_item", None)
+                            out = getattr(item, "output", "") or ""
+                            # function_call_output は raw が dict / SDK 型のいずれもありうる
+                            call_id = ""
+                            if isinstance(raw, dict):
+                                call_id = raw.get("call_id") or ""
+                            else:
+                                call_id = getattr(raw, "call_id", "") or ""
+                            name = tool_name_by_call_id.get(call_id) or "(tool)"
+                            yield {
+                                "type": "tool_result",
+                                "name": name,
+                                "result": str(out),
+                                "call_id": str(call_id),
+                            }
+                        # message_output_item は delta で逐次受信済みのため再 yield は不要
+            except APIStatusError as e:
+                # OCI が MCP tool list 取得で 424 等を返すケース. 部分出力が無ければ retry.
+                if (
+                    not text_parts
+                    and turn_count == 0
+                    and attempt < _OCI_STREAM_RETRY_MAX - 1
+                ):
+                    logger.warning(
+                        "OCI APIStatusError %d (attempt %d/%d), retrying: %s",
+                        e.status_code,
+                        attempt + 1,
+                        _OCI_STREAM_RETRY_MAX,
+                        str(e)[:200],
+                    )
+                    stream_failed_no_output = True
+                else:
+                    raise
 
-        async for event in result.stream_events():
-            if event.type == "raw_response_event":
-                if isinstance(event.data, ResponseTextDeltaEvent):
-                    delta = event.data.delta or ""
-                    if delta:
-                        text_parts.append(delta)
-                        yield {"type": "delta", "text": delta}
-            elif event.type == "run_item_stream_event":
-                item = event.item
-                itype = getattr(item, "type", None)
-                if itype == "tool_call_item":
-                    raw = getattr(item, "raw_item", None)
-                    name = getattr(raw, "name", None) or getattr(raw, "type", "?")
-                    args = getattr(raw, "arguments", "") or ""
-                    call_id = getattr(raw, "call_id", None) or getattr(raw, "id", None) or ""
-                    if call_id:
-                        tool_name_by_call_id[call_id] = str(name)
-                    otel_setup.record_tool_invocation(str(name), "called")
-                    turn_count += 1
-                    yield {
-                        "type": "tool_call",
-                        "name": str(name),
-                        "arguments": args,
-                        "call_id": str(call_id),
-                    }
-                elif itype == "tool_call_output_item":
-                    raw = getattr(item, "raw_item", None)
-                    out = getattr(item, "output", "") or ""
-                    # function_call_output は raw が dict / SDK 型のいずれもありうる
-                    call_id = ""
-                    if isinstance(raw, dict):
-                        call_id = raw.get("call_id") or ""
-                    else:
-                        call_id = getattr(raw, "call_id", "") or ""
-                    name = tool_name_by_call_id.get(call_id) or "(tool)"
-                    yield {
-                        "type": "tool_result",
-                        "name": name,
-                        "result": str(out),
-                        "call_id": str(call_id),
-                    }
-                # message_output_item は delta で逐次受信済みのため再 yield は不要
+            # retry が必要なら次の attempt へ. 必要なければループ終了.
+            if not stream_failed_no_output:
+                break
+
+        # 最終 text が無い場合は non-streaming にフォールバック.
+        # ケース:
+        #   (a) tool 呼出無し + 0 deltas → 純粋な stream 失敗
+        #   (b) tool 呼出後の最終 text が stream 切断で来なかった
+        # どちらでも non-streaming は安定しているため再実行で text を取得する.
+        if not text_parts:
+            logger.warning(
+                "OCI streaming returned empty text (turns=%d), falling back to non-streaming",
+                turn_count,
+            )
+            try:
+                fallback_result = await Runner.run(
+                    sdk_agent,
+                    input=user_msg,
+                    session=session,
+                    max_turns=self._max_react_turns,
+                    run_config=self._run_config(mode, metadata),
+                )
+                fallback_text = (
+                    str(fallback_result.final_output)
+                    if fallback_result.final_output is not None
+                    else ""
+                )
+                if fallback_text:
+                    text_parts.append(fallback_text)
+                    yield {"type": "delta", "text": fallback_text}
+                result = fallback_result
+            except Exception as e:
+                logger.error("non-streaming fallback failed: %s", e)
 
         otel_setup.record_response_latency(time.monotonic() - start, mode)
         otel_setup.record_react_turns(turn_count, mode)
