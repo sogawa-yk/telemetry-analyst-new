@@ -67,3 +67,11 @@ chaos/scripts/k6-in-cluster.sh spike-load    # 0→200 VU spike
 chaos/scripts/k6-in-cluster.sh error-storm   # 4xx/404 ログ大量生成
 chaos/scripts/k6-in-cluster.sh --cleanup     # 全 k6 Job/CM 削除
 ```
+
+## トラブルシュート
+
+| 症状 | 参照 |
+|---|---|
+| エージェント応答が空文字 / フリーズ | [`docs/runbook/oci-streaming-flakiness.md`](docs/runbook/oci-streaming-flakiness.md) |
+| A2A サーバの利用方法 / Bearer Token | [`docs/runbook/a2a_client.md`](docs/runbook/a2a_client.md) |
+| Langfuse Evaluator のセットアップ | [`docs/runbook/langfuse_evaluator_setup.md`](docs/runbook/langfuse_evaluator_setup.md) |
