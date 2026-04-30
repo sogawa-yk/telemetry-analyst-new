@@ -250,6 +250,12 @@ class Agent:
         # call_id -> tool 名 を覚えておき、tool_call_output_item で名前を引く
         tool_name_by_call_id: dict[str, str] = {}
         turn_count = 0
+        # 各 OCI 呼出 (= turn) の状態を追跡. 最後の turn が "completed" でないと
+        # ユーザに途中で切断された応答が届く. multi-turn ReAct の N>=2 turn で
+        # incomplete が起きるケースを後段の fallback で救うために使用.
+        last_turn_state = "no_turn"  # "no_turn" | "in_progress" | "completed" | "incomplete"
+        last_turn_incomplete_reason: str | None = None
+        midflight_api_error: APIStatusError | None = None
 
         # OCI ap-osaka-1 の streaming flakiness 対策: stream_final_event_missing で
         # 部分出力が無い場合は内部的に再試行する. 外部から見ると単純な遅延に見える.
@@ -267,16 +273,23 @@ class Agent:
             try:
                 async for event in result.stream_events():
                     if event.type == "raw_response_event":
+                        etype = getattr(event.data, "type", "")
+                        if etype == "response.created":
+                            last_turn_state = "in_progress"
+                        elif etype == "response.completed":
+                            last_turn_state = "completed"
                         if isinstance(event.data, ResponseTextDeltaEvent):
                             delta = event.data.delta or ""
                             if delta:
                                 text_parts.append(delta)
                                 yield {"type": "delta", "text": delta}
                         elif isinstance(event.data, ResponseIncompleteEvent):
+                            last_turn_state = "incomplete"
                             details = getattr(
                                 event.data.response, "incomplete_details", None
                             )
                             reason = getattr(details, "reason", None) if details else None
+                            last_turn_incomplete_reason = reason
                             # 出力済の text/tool が無い場合のみ retry (重複 yield を防ぐ)
                             if (
                                 reason == "stream_final_event_missing"
@@ -346,21 +359,50 @@ class Agent:
                     )
                     stream_failed_no_output = True
                 else:
-                    raise
+                    # 部分出力済 (= multi-turn の途中) で 400/424 が来た場合は
+                    # raise せずに記録し、後段の fallback で再実行する.
+                    # ASGI exception で SSE が中途半端に切れて
+                    # "peer closed connection" 系の UI エラーになるのを防ぐ.
+                    logger.warning(
+                        "OCI APIStatusError %d mid-stream (text=%d chars, turns=%d): %s",
+                        e.status_code,
+                        sum(len(t) for t in text_parts),
+                        turn_count,
+                        str(e)[:200],
+                    )
+                    midflight_api_error = e
+                    last_turn_state = "incomplete"
 
             # retry が必要なら次の attempt へ. 必要なければループ終了.
             if not stream_failed_no_output:
                 break
 
-        # 最終 text が無い場合は non-streaming にフォールバック.
-        # ケース:
-        #   (a) tool 呼出無し + 0 deltas → 純粋な stream 失敗
-        #   (b) tool 呼出後の最終 text が stream 切断で来なかった
-        # どちらでも non-streaming は安定しているため再実行で text を取得する.
-        if not text_parts:
+        # 後段 fallback の起動条件:
+        #   (1) text が一切出ていない (旧条件)
+        #   (2) 最後の turn が response.completed で終わっていない (multi-turn 途中切断)
+        #   (3) ストリーム途中で APIStatusError が発生した (MCP fetch 失敗等)
+        #   (4) tool 呼出があるのに最終 text が異常短 (C truncated_completion パターン)
+        #   (5) 最終 text が open delimiter / 未閉じ code block で終わっている
+        # multi-turn ReAct の synthesis turn で incomplete が起きるケースを救う.
+        # 既送信済の text と新たに生成される full 応答の重複は separator で明示する.
+        full_text = "".join(text_parts)
+        looks_truncated = _looks_truncated(full_text, turn_count)
+        needs_fallback = (
+            not text_parts
+            or last_turn_state != "completed"
+            or midflight_api_error is not None
+            or looks_truncated
+        )
+        if needs_fallback:
             logger.warning(
-                "OCI streaming returned empty text (turns=%d), falling back to non-streaming",
+                "fallback to non-streaming: text=%d chars, turns=%d, last_turn=%s, "
+                "incomplete_reason=%s, mid_api_err=%s, looks_truncated=%s",
+                len(full_text),
                 turn_count,
+                last_turn_state,
+                last_turn_incomplete_reason,
+                bool(midflight_api_error),
+                looks_truncated,
             )
             try:
                 fallback_result = await Runner.run(
@@ -376,11 +418,24 @@ class Agent:
                     else ""
                 )
                 if fallback_text:
+                    if text_parts:
+                        # 既送信済の途切れた text と区別するための separator
+                        sep = "\n\n---\n_[応答が途中で切れたため再生成しました]_\n\n"
+                        text_parts.append(sep)
+                        yield {"type": "delta", "text": sep}
                     text_parts.append(fallback_text)
                     yield {"type": "delta", "text": fallback_text}
                 result = fallback_result
             except Exception as e:
                 logger.error("non-streaming fallback failed: %s", e)
+                # それでも何も text が無い場合は最低限のエラーメッセージを返す
+                if not text_parts:
+                    msg = (
+                        "(OCI Responses API の応答が安定せず取得できませんでした. "
+                        "もう一度お試しください.)"
+                    )
+                    text_parts.append(msg)
+                    yield {"type": "delta", "text": msg}
 
         otel_setup.record_response_latency(time.monotonic() - start, mode)
         otel_setup.record_react_turns(turn_count, mode)
@@ -394,6 +449,39 @@ class Agent:
 # ----------------------------------------------------------------------
 # helpers
 # ----------------------------------------------------------------------
+
+
+def _looks_truncated(text: str, turn_count: int) -> bool:
+    """text が「OCI/モデル側で途中切断された」 ように見えるかの heuristic.
+
+    OCI Responses API は時々 response.completed を送るのに output_tokens が
+    異常少ない (C パターン). 真の SDK 失敗では検出できないため、出力末尾の
+    形と長さで判定する.
+    """
+    import re
+
+    s = text.rstrip()
+    if not s:
+        return False  # 完全空は別系統で fallback
+    # ReAct で tool 使ったのに極端に短い
+    # 構造化レポート (症状/根拠/仮説/推奨アクション/次に掘るべき点) は通常 800+ chars.
+    # 500 chars を下回るのは途中切断の可能性高.
+    if turn_count >= 1 and len(s) < 500:
+        return True
+    # 末尾が open paren / open bracket / 未閉じ inline code
+    # 半角に加え全角の括弧 (FULLWIDTH 括弧群) も truncation 候補
+    if s[-1] in "([「『（｛`":  # noqa: RUF001
+        return True
+    # ``` の数が奇数 = 未閉じ code fence
+    if s.count("```") % 2 == 1:
+        return True
+    # 末尾が空のリスト項目 / セクションヘッダ:
+    #   "## XX" だけで本文無し
+    #   "1." / "1)" / "(1)" / "- " / "* " で内容なし
+    last_line = s.rsplit("\n", 1)[-1].strip()
+    if re.match(r"^#{1,6}\s+\S+\s*$", last_line) and len(last_line) < 40:
+        return True
+    return bool(re.match(r"^(\d+[\.\)]|[-*])\s*$", last_line))
 
 
 def _extract_tool_calls(new_items: list[Any]) -> list[dict[str, Any]]:
