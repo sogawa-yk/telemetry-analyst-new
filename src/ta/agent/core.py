@@ -255,6 +255,8 @@ class Agent:
         # incomplete が起きるケースを後段の fallback で救うために使用.
         last_turn_state = "no_turn"  # "no_turn" | "in_progress" | "completed" | "incomplete"
         last_turn_incomplete_reason: str | None = None
+        last_turn_output_tokens: int | None = None  # response.completed の usage から
+        last_turn_incomplete_details_on_completed: bool = False  # completed なのに incomplete_details
         midflight_api_error: APIStatusError | None = None
 
         # OCI ap-osaka-1 の streaming flakiness 対策: stream_final_event_missing で
@@ -278,6 +280,17 @@ class Agent:
                             last_turn_state = "in_progress"
                         elif etype == "response.completed":
                             last_turn_state = "completed"
+                            # response.completed でも稀に incomplete_details が付く OCI quirk
+                            resp = getattr(event.data, "response", None)
+                            if resp is not None:
+                                ic = getattr(resp, "incomplete_details", None)
+                                if ic is not None:
+                                    last_turn_incomplete_details_on_completed = True
+                                usage = getattr(resp, "usage", None)
+                                if usage is not None:
+                                    last_turn_output_tokens = getattr(
+                                        usage, "output_tokens", None
+                                    )
                         if isinstance(event.data, ResponseTextDeltaEvent):
                             delta = event.data.delta or ""
                             if delta:
@@ -387,22 +400,35 @@ class Agent:
         # 既送信済の text と新たに生成される full 応答の重複は separator で明示する.
         full_text = "".join(text_parts)
         looks_truncated = _looks_truncated(full_text, turn_count)
+        # OCI が response.completed の中に incomplete_details を含めて返す quirk
+        oci_quirk_incomplete = last_turn_incomplete_details_on_completed
+        # output_tokens が異常少ない (tool 呼出後で <250) → C truncation の強い証拠
+        suspect_output_tokens = (
+            turn_count >= 1
+            and last_turn_output_tokens is not None
+            and last_turn_output_tokens < 250
+        )
         needs_fallback = (
             not text_parts
             or last_turn_state != "completed"
             or midflight_api_error is not None
             or looks_truncated
+            or oci_quirk_incomplete
+            or suspect_output_tokens
         )
         if needs_fallback:
             logger.warning(
                 "fallback to non-streaming: text=%d chars, turns=%d, last_turn=%s, "
-                "incomplete_reason=%s, mid_api_err=%s, looks_truncated=%s",
+                "incomplete_reason=%s, mid_api_err=%s, looks_truncated=%s, "
+                "out_tokens=%s, oci_quirk=%s",
                 len(full_text),
                 turn_count,
                 last_turn_state,
                 last_turn_incomplete_reason,
                 bool(midflight_api_error),
                 looks_truncated,
+                last_turn_output_tokens,
+                oci_quirk_incomplete,
             )
             try:
                 fallback_result = await Runner.run(
@@ -465,8 +491,12 @@ def _looks_truncated(text: str, turn_count: int) -> bool:
         return False  # 完全空は別系統で fallback
     # ReAct で tool 使ったのに極端に短い
     # 構造化レポート (症状/根拠/仮説/推奨アクション/次に掘るべき点) は通常 800+ chars.
-    # 500 chars を下回るのは途中切断の可能性高.
-    if turn_count >= 1 and len(s) < 500:
+    # tool 数 x 200 chars を最低限の期待値とする (経験則).
+    expected_min = max(500, turn_count * 200)
+    if turn_count >= 1 and len(s) < expected_min:
+        return True
+    # markdown 強調 (** 太字, _ 斜体) の未閉じ
+    if s.count("**") % 2 == 1:
         return True
     # 末尾が open paren / open bracket / 未閉じ inline code
     # 半角に加え全角の括弧 (FULLWIDTH 括弧群) も truncation 候補
@@ -475,13 +505,24 @@ def _looks_truncated(text: str, turn_count: int) -> bool:
     # ``` の数が奇数 = 未閉じ code fence
     if s.count("```") % 2 == 1:
         return True
+    # 末尾の行ベースのチェック (rstrip 前の最後の行を見る)
+    last_line_raw = s.rsplit("\n", 1)[-1]
+    last_line = last_line_raw.strip()
     # 末尾が空のリスト項目 / セクションヘッダ:
     #   "## XX" だけで本文無し
     #   "1." / "1)" / "(1)" / "- " / "* " で内容なし
-    last_line = s.rsplit("\n", 1)[-1].strip()
     if re.match(r"^#{1,6}\s+\S+\s*$", last_line) and len(last_line) < 40:
         return True
-    return bool(re.match(r"^(\d+[\.\)]|[-*])\s*$", last_line))
+    if re.match(r"^(\d+[\.\)]|[-*])\s*$", last_line):
+        return True
+    # markdown table 行の中途切断:
+    #   "|" で始まる行 (table row) が "|" で終わっていない = mid-cell truncation
+    if last_line.startswith("|") and not last_line.endswith("|"):
+        return True
+    # 開き括弧の数 > 閉じ括弧の数 (最後の段落内で未閉じ括弧)
+    last_para = s.rsplit("\n\n", 1)[-1]
+    pairs = [("(", ")"), ("[", "]"), ("{", "}"), ("（", "）"), ("「", "」"), ("『", "』")]  # noqa: RUF001
+    return any(last_para.count(o) > last_para.count(c) for o, c in pairs)
 
 
 def _extract_tool_calls(new_items: list[Any]) -> list[dict[str, Any]]:
