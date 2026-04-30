@@ -14,3 +14,5 @@ venv/
 .files/
 *.log
 node_modules/
+e2e-*.png
+.playwright-mcp/

@@ -8,8 +8,8 @@ metadata:
 data:
   # OCI Enterprise AI (Responses / Conversations API)
   OPENAI_BASE_URL: "https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com/openai/v1"
-  OCI_GENAI_PROJECT: "ocid1.generativeaiproject.oc1.ap-osaka-1.amaaaaaassl65iqak67q6dr5zu6jqoimgf54sylota5devqglzkkoenxznxa"
-  OCI_GENAI_MODEL: "openai.gpt-4.1"
+  OCI_GENAI_PROJECT: "ocid1.generativeaiproject.oc1.ap-osaka-1.amaaaaaatgpiiviacnxk4vv5hji4omdypwcvetdebo5e623pgbgrlgrnkqiq"
+  OCI_GENAI_MODEL: "openai.gpt-oss-120b"
 
   # Langfuse
   LANGFUSE_HOST: "http://langfuse-web.langfuse.svc.cluster.local:3000"
