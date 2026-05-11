@@ -28,7 +28,7 @@ spec:
         - name: ocir-secret
       containers:
         - name: api
-          image: kix.ocir.io/nr3c2r62ocsa/telemetry-analyst/api:v0.2.20
+          image: kix.ocir.io/nr3c2r62ocsa/telemetry-analyst/api:v0.2.21-fix-input
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080

@@ -14,6 +14,11 @@ OCI の Responses API は OpenAI 互換とされるが、いくつかのフィ�
   入れて output を省くため、ここで補完する.
 - 同様に `function_call_output.output` が空文字 ("") のケースで OCI が
   reject する報告がある (公式は許容). 念のためフォールバックを入れる.
+- OCI Responses API は `input[N]` の各 message item に `"type":"message"`
+  を要求する (省略すると `Invalid 'input': expected a valid Responses API
+  input payload.` 400). OpenAI 公式は `{role,content}` だけでも受け付ける.
+  Agents SDK / openai SDK は `type` 省略形を送るため、role 持ち & type 欠落
+  の item に type=message を補完する.
 """
 
 from __future__ import annotations
@@ -43,6 +48,12 @@ def _sanitize_input_items(items: list) -> int:
         if not isinstance(item, dict):
             continue
         t = item.get("type")
+        # role 持ちで type 欠落 → message item を意図しているので type=message を補完
+        # (OCI が `Invalid 'input': expected a valid Responses API input payload.` で reject する原因)
+        if t is None and "role" in item:
+            item["type"] = "message"
+            changed += 1
+            continue
         if t == "mcp_call" and "output" not in item:
             err_text = _mcp_error_text(item)
             item["output"] = f"(MCP tool error: {err_text})"
