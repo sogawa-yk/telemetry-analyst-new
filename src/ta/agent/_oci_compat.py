@@ -54,10 +54,20 @@ def _sanitize_input_items(items: list) -> int:
             item["type"] = "message"
             changed += 1
             continue
-        if t == "mcp_call" and "output" not in item:
-            err_text = _mcp_error_text(item)
-            item["output"] = f"(MCP tool error: {err_text})"
-            changed += 1
+        if t == "mcp_call":
+            # OCI は失敗 mcp_call に対し以下を要求:
+            #   (1) output フィールドを必ず持つこと (OpenAI 公式は省略可)
+            #   (2) error フィールドを持っていないこと (output と併存しても reject)
+            # SDK は失敗時 error のみ入れて output を省くため両方補正する.
+            fixed = False
+            if "output" not in item:
+                err_text = _mcp_error_text(item)
+                item["output"] = f"(MCP tool error: {err_text})"
+                fixed = True
+            if item.pop("error", None) is not None:
+                fixed = True
+            if fixed:
+                changed += 1
         elif t == "function_call_output" and not item.get("output"):
             item["output"] = "(empty output)"
             changed += 1

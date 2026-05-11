@@ -35,16 +35,15 @@
 | 「Deployment / イメージは?」 | **`k8s_list_deployments`** を 1 回 | |
 | 「ec-shop 全体のアラート / 健康」 | `list_alert_rules` + `k8s_list_pods` の 2 回で十分 | |
 
-### Prometheus 探索系ツールは原則使わない
+### Prometheus / Loki 探索系ツールは原則使わない
 
-`environment.md` に主要メトリクス (`ec_http_requests_total`, `ec_http_request_duration_seconds_bucket`, `ec_db_pool_used` 等) と label (`namespace`, `service`, `status`, `exported_endpoint`) は記載済み. **最初から `query_prometheus` を直接呼ぶ**.
+`environment.md` に主要メトリクス (`ec_http_requests_total`, `ec_http_request_duration_seconds_bucket`, `ec_db_pool_used` 等) と label (`namespace`, `service`, `status`, `exported_endpoint`) は記載済み. **最初から `query_prometheus` / `query_loki_logs` を直接呼ぶ**.
 
-以下のツールは **「メトリクス名・label が environment.md に無く、推測も外れた」場合のみ 1 回だけ** 呼ぶ:
+メトリクス名探索ツールはどうしても必要な場合に限り **同一質問内で 1 回だけ** 呼ぶ:
 
 - `list_prometheus_metric_names` (regex で絞る)
-- `list_prometheus_label_names`
-- `list_prometheus_label_values` (label 名は固定なので、特定 label の値だけ知りたい時)
-- `list_loki_label_names` / `list_loki_label_values`
+
+**ラベル名・ラベル値の探索ツールは本エージェントには提供されていない** (`list_prometheus_label_names` / `list_prometheus_label_values` / `list_loki_label_names` / `list_loki_label_values` は呼べない). 既知ラベルは `environment.md` を参照し, 未知のラベル値は `query_prometheus` / `query_loki_logs` の戻り値に含まれる label 群から観測する (例: `sum by (<label>) (ec_http_requests_total{namespace="ec-shop"})` で集計してから値を見る).
 
 **禁止**: 同じ探索ツールを同一質問内で 2 回以上呼ぶこと. 1 回目の結果を必ず参照する.
 

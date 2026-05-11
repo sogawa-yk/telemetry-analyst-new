@@ -23,9 +23,30 @@ def test_sanitize_mcp_call_failed_without_output() -> None:
         },
     ]
     changed = _sanitize_input_items(items)
-    assert changed == 1
+    assert changed == 1  # 1 mcp_call item は output 追加 + error 削除をまとめて 1 件とカウント
     assert items[1]["output"].startswith("(MCP tool error:")
     assert "DNS resolution failed" in items[1]["output"]
+    # OCI は error フィールドが残っていると output 併存でも reject するため削除されている
+    assert "error" not in items[1]
+
+
+def test_sanitize_mcp_call_with_error_and_output_strips_error() -> None:
+    items = [
+        {
+            "type": "mcp_call",
+            "id": "mcp_yy",
+            "name": "q",
+            "arguments": "{}",
+            "status": "failed",
+            "output": "(MCP tool error: prior)",
+            "error": {"content": [{"text": "stale error"}]},
+        },
+    ]
+    changed = _sanitize_input_items(items)
+    assert changed == 1
+    assert "error" not in items[0]
+    # 既存 output は触らない
+    assert items[0]["output"] == "(MCP tool error: prior)"
 
 
 def test_sanitize_mcp_call_already_has_output_unchanged() -> None:
