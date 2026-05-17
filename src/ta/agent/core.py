@@ -24,13 +24,14 @@ from agents import (
 )
 from agents import (
     ItemHelpers,
-    OpenAIConversationsSession,
     RunConfig,
     Runner,
     set_default_openai_api,
     set_default_openai_client,
     set_tracing_disabled,
 )
+
+from ta.agent._filtered_session import FilteredOpenAIConversationsSession
 from openai import APIStatusError, AsyncOpenAI
 from openai.types.responses import (
     ResponseIncompleteEvent,
@@ -155,10 +156,14 @@ class Agent:
         conv = await self._async_client.conversations.create(metadata=metadata or {})
         return conv.id
 
-    def _session_for(self, conversation_id: str | None) -> OpenAIConversationsSession | None:
+    def _session_for(
+        self, conversation_id: str | None
+    ) -> FilteredOpenAIConversationsSession | None:
         if not conversation_id:
             return None
-        return OpenAIConversationsSession(
+        # gpt-oss-120b は reasoning item を出力するが input は拒否するため、
+        # Conversations API から取り出した履歴の reasoning item を捨てる.
+        return FilteredOpenAIConversationsSession(
             conversation_id=conversation_id,
             openai_client=self._async_client,
         )
