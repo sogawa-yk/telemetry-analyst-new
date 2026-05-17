@@ -47,7 +47,7 @@ spec:
               memory: 1Gi
           readinessProbe:
             httpGet:
-              path: /
+              path: /ui
               port: 8081
             initialDelaySeconds: 10
             periodSeconds: 10

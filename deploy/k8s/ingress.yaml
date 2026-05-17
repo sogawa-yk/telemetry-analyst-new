@@ -13,19 +13,18 @@ metadata:
 spec:
   ingressClassName: ic
   rules:
+    # 単一ホスト + パス分離: /ui → Chainlit, / → FastAPI (/a2a を含む).
+    # K8s Ingress の Prefix マッチは最長一致優先なので /ui と / の順序は問わない.
     - host: ta.devday26.sogawa-yk.com
       http:
         paths:
-          - path: /
+          - path: /ui
             pathType: Prefix
             backend:
               service:
                 name: ta-agent-ui
                 port:
                   number: 8081
-    - host: ta-api.devday26.sogawa-yk.com
-      http:
-        paths:
           - path: /
             pathType: Prefix
             backend:
@@ -36,7 +35,6 @@ spec:
   tls:
     - hosts:
         - ta.devday26.sogawa-yk.com
-        - ta-api.devday26.sogawa-yk.com
       secretName: wildcard-sogawa-yk-com-tls
 ---
 # MCP Grafana は healthcheck path が異なる (/healthz) ので別 Ingress に分離.

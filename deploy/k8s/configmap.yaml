@@ -39,3 +39,7 @@ data:
 
   # UI → API
   TA_AGENT_URL: "http://ta-agent.telemetry-analyst.svc:8080"
+
+  # A2A 公開 URL: AgentCard の supportedInterfaces[].url に書かれる.
+  # FastAPI は /a2a でマウントしているため、外部 URL も同じパスを付与する.
+  A2A_PUBLIC_URL: "https://ta.devday26.sogawa-yk.com/a2a"

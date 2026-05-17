@@ -24,6 +24,11 @@ metadata:
   labels:
     app: ta-agent
     component: ui
+  annotations:
+    # LB のヘルスチェックは Chainlit が --root-path /ui で公開しているため /ui に向ける.
+    # Ingress 側の healthcheck-path: / は API (ta-agent) 用. UI 側は Service の annotation で上書き.
+    oci-native-ingress.oraclecloud.com/healthcheck-protocol: HTTP
+    oci-native-ingress.oraclecloud.com/healthcheck-path: /ui
 spec:
   selector:
     app: ta-agent

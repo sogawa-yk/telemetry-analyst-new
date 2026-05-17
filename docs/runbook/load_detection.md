@@ -6,7 +6,7 @@
 
 - 新クラスタ KIDS2 (`devday26.sogawa-yk.com`) 上で:
   - `ec-shop/ec-web` Deployment が稼働. ServiceMonitor 経由で `ec_http_requests_total` / `ec_http_request_duration_seconds` / `ec_active_requests` / `ec_orders_total` / `ec_db_pool_used` 等が Prometheus に流れている
-  - `telemetry-analyst/ta-agent` が稼働. UI は `https://ta.devday26.sogawa-yk.com`
+  - `telemetry-analyst/ta-agent` が稼働. UI は `https://ta.devday26.sogawa-yk.com/ui`, API/A2A は同ホストの `/` 配下
   - `kubectl` コンテキストが新クラスタを向いている
 - k6 は `grafana/k6:0.52.0` イメージを Pod として ec-shop NS で実行する (ホストへの k6 インストール不要)
 - 既存の `ec-shop/load-generator` Deployment (curl ループ, ~20 req/s baseline) は **動かしたまま**. k6 はその上に上乗せするチャオス用途

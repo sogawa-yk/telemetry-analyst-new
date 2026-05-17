@@ -56,7 +56,7 @@ RBAC (Role スコープ) と実装レイヤの双方で遮断する二重防御�
 - OCI Endpoint: `https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com/openai/v1`
 - OCIR: `syd.ocir.io/orasejapan/telemetry-analyst[-ui]:<TAG>`
 - Ingress `ingressClassName`: `ic`
-- ホスト: `ta.sogawa-yk.com` (UI) / `ta-api.sogawa-yk.com` (API)
+- ホスト: `ta.devday26.sogawa-yk.com` (単一ホスト, パスで分離 — UI: `/ui`, API/A2A: `/`)
 - TLS Secret: `wildcard-sogawa-yk-com-tls`
 - 主要 Secret: `oci-genai-key` / `langfuse-keys` / `ocir`
 

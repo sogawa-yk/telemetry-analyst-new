@@ -19,4 +19,5 @@ USER ta
 EXPOSE 8081
 
 CMD ["chainlit", "run", "src/ta/ui/chainlit_app.py", \
-     "--host", "0.0.0.0", "--port", "8081", "--headless"]
+     "--host", "0.0.0.0", "--port", "8081", "--headless", \
+     "--root-path", "/ui"]

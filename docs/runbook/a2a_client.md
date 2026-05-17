@@ -4,10 +4,12 @@
 
 ## 概要
 
-- **エンドポイント**: `http://ta-agent.telemetry-analyst.svc:8080/a2a/`
+- **エンドポイント**:
+  - クラスタ内 (推奨): `http://ta-agent.telemetry-analyst.svc:8080/a2a/`
+  - 外部公開 (Ingress 経由): `https://ta.devday26.sogawa-yk.com/a2a/` (UI と同一ホスト. パスで分離)
   - AgentCard: `GET /a2a/.well-known/agent-card.json`
   - JSON-RPC: `POST /a2a/`
-- **公開範囲**: ClusterIP のみ. Ingress なし (外部公開しない)
+- **公開範囲**: ClusterIP + Ingress 同居. AgentCard の `supportedInterfaces[].url` は `A2A_PUBLIC_URL` 環境変数 (ConfigMap `ta-agent-config`) で制御し、現状は外部 URL を採用
 - **認証**: Bearer Token (Secret `ta-agent-a2a-token` の `token` フィールド)
 - **Skill**: 単一 `diagnose-ec-shop` ("ec-shop NS の障害診断")
 - **入出力**: text のみ. streaming は v0.2.9 では未対応 (Task → Artifact 完了通知)
@@ -61,7 +63,7 @@ kubectl run a2a-probe --rm -it --restart=Never \
     "examples": [...]
   }],
   "supportedInterfaces": [{
-    "url": "http://ta-agent.telemetry-analyst.svc:8080/a2a",
+    "url": "https://ta.devday26.sogawa-yk.com/a2a",
     "protocolBinding": "JSONRPC",
     "protocolVersion": "1.0"
   }]

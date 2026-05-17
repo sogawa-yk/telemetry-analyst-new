@@ -11,7 +11,7 @@
 - **メモリ**: Responses API / Conversations API に委任 (自前ストアなし)
 - **Chat UI**: Chainlit
 - **可観測性**: Langfuse (LLM 挙動) + OTel → 既存 Prometheus/Loki/Tempo → Grafana (ランタイム)
-- **公開**: Kubernetes Ingress (IngressClass `ic`, `ta.sogawa-yk.com` / `ta-api.sogawa-yk.com`)
+- **公開**: Kubernetes Ingress (IngressClass `ic`, 単一ホスト `ta.devday26.sogawa-yk.com` をパスで分離 — UI: `/ui`, API/A2A: `/`)
 
 詳細は `/home/opc/.claude/plans/kubernetes-ec-shop-prometheus-loki-temp-fancy-hartmanis.md` 参照。
 
